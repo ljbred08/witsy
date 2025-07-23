@@ -33,7 +33,7 @@ global.fetch = vi.fn(async (url: string | Request, init?: any) => {
       ok: true,
       status: 200,
       statusText: 'OK',
-      json: async () => ({ text: 'mocked transcript' }),
+      json: async () => ({ text: 'mock-transcription' }),
       text: async () => ''
     }
   }
@@ -64,11 +64,18 @@ global.fetch = vi.fn(async (url: string | Request, init?: any) => {
       ok: true,
       status: 200,
       statusText: 'OK',
-      json: async () => ({ choices: [{ message: { content: 'transcribed' } }] }),
+      json: async () => ({ choices: [{ message: { content: 'mock-completion' } }] }),
       text: async () => ''
     }
   }
 
+  if (url.includes('gladia') && url.includes('upload')) {
+    return {
+      json: () => ({
+        audio_url: 'https://api.gladia.io/v2/upload/1234567890',
+      })
+    }
+  }
   if (url.includes('gladia') && url.includes('pre-recorded')) {
     return {
       json: () => ({
@@ -194,9 +201,9 @@ test('Instantiates OpenAI by default', async () => {
   await expect(engine.transcribe(new Blob())).resolves.toStrictEqual({ text: 'transcribed' })
 })
 
-test('Instantiates Mistral', async () => {
+test('Instantiates Mistral Transcription', async () => {
   store.config.stt.engine = 'mistralai'
-  store.config.stt.model = 'voxtral-mini-2507' // explicit chat-completion model
+  store.config.stt.model = 'voxtral-mini-latest-transcribe' // explicit chat-completion model
   store.config.engines.mistralai = {
     apiKey: 'dummy-mistral-key',
     models: { chat: [] },      // minimal valid ModelsConfig
@@ -210,7 +217,19 @@ test('Instantiates Mistral', async () => {
   expect(engine.requiresDownload()).toBe(false)
   await engine.initialize(initCallback)
   expect(initCallback).toHaveBeenLastCalledWith({ task: 'mistralai', status: 'ready', model: expect.any(String) })
-  await expect(engine.transcribe(new Blob())).resolves.toStrictEqual({ text: 'transcribed' })
+  await expect(engine.transcribe(new Blob())).resolves.toStrictEqual({ text: 'mock-transcription' })
+})
+
+test('Instantiates Mistral Completion', async () => {
+  store.config.stt.engine = 'mistralai'
+  store.config.stt.model = 'voxtral-mini-latest'
+  const engine = getSTTEngine(store.config)
+  expect(engine).toBeDefined()
+  expect(engine).toBeInstanceOf(STTMistral)
+  await engine.initialize(initCallback)
+  expect(initCallback).toHaveBeenLastCalledWith({ task: 'mistralai', status: 'ready', model: expect.any(String) })
+  // @ts-expect-error mocking
+  await expect(engine.transcribe({ type: 'audio/wav', arrayBuffer: async () => ([]) })).resolves.toStrictEqual({ text: 'mock-completion' })
 })
 
 test('Instantiates Groq', async () => {
@@ -263,23 +282,7 @@ test('Instantiates Gladia', async () => {
   expect(engine.requiresDownload()).toBe(false)
   await engine.initialize(initCallback)
   expect(initCallback).toHaveBeenLastCalledWith({ task: 'gladia', status: 'ready', model: expect.any(String) })
-  await expect(engine.transcribe({
-    type: 'audio/wav',
-    // @ts-expect-error mocking
-    arrayBuffer: async () => ([])
-  })).resolves.toStrictEqual({ text: 'transcribed' })
-})
-
-test('Direct Mistral transcription endpoint returns mocked transcript', async () => {
-  store.config.stt.engine = 'mistralai'
-  store.config.stt.model = 'voxtral-mini-latest' // triggers direct endpoint
-  const engine = getSTTEngine(store.config)
-  expect(engine).toBeDefined()
-  expect(engine).toBeInstanceOf(STTMistral)
-  await engine.initialize(initCallback)
-  expect(initCallback).toHaveBeenLastCalledWith({ task: 'mistralai', status: 'ready', model: expect.any(String) })
-  // @ts-expect-error mocking
-  await expect(engine.transcribe({ type: 'audio/wav', arrayBuffer: async () => ([]) })).resolves.toStrictEqual({ text: 'mocked transcript' })
+  await expect(engine.transcribe(new Blob(['mock audio data'], { type: 'audio/webm' }))).resolves.toStrictEqual({ text: 'transcribed' })
 })
 
 test('Instantiates HuggingFace', async () => {
@@ -306,7 +309,7 @@ test('Instantiates nVidia', async () => {
   expect(engine.requiresDownload()).toBe(false)
   await engine.initialize(initCallback)
   expect(initCallback).toHaveBeenLastCalledWith({ task: 'nvidia', status: 'ready', model: expect.any(String) })
-  await expect(engine.transcribe(new Blob())).resolves.toStrictEqual({ text: 'transcribed' })
+  await expect(engine.transcribe(new Blob())).resolves.toStrictEqual({ text: 'mock-completion' })
 })
 
 
