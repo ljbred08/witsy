@@ -5,7 +5,7 @@ import { STTEngine, ProgressCallback, ProgressInfo, TaskStatus, TranscribeRespon
 // importing from @xenova/transformers leads to a runtime error
 import { env, pipeline } from '@huggingface/transformers'
 
-export default class STTWhisper implements STTEngine {
+export default class STTLocal implements STTEngine {
 
   config: Configuration
   transcriber?: any
@@ -16,6 +16,8 @@ export default class STTWhisper implements STTEngine {
     { id: 'Xenova/whisper-base', label: 'Whisper Turbo Base (requires download)' },
     { id: 'Xenova/whisper-small', label: 'Whisper Turbo Small (requires download)' },
     { id: 'Xenova/whisper-medium', label: 'Whisper Turbo Medium (requires download)' },
+    { id: 'ibm-granite/granite-speech-3.3-2b', label: 'IBM Granite Speech 3.3 2B (requires download)' },
+    { id: 'ibm-granite/granite-speech-3.3-8b', label: 'IBM Granite Speech 3.3 8B (requires download)' },
   ]
 
   constructor(config: Configuration) {
@@ -24,7 +26,7 @@ export default class STTWhisper implements STTEngine {
   }
 
   get name(): string {
-    return 'whisper'
+    return 'local'
   }
 
   isReady(): boolean {
@@ -41,7 +43,7 @@ export default class STTWhisper implements STTEngine {
   }
 
   requiresDownload(): boolean {
-    return STTWhisper.requiresDownload()
+    return STTLocal.requiresDownload()
   }
 
   async initialize(callback?: ProgressCallback): Promise<void> {
