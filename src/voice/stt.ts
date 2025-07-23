@@ -10,7 +10,7 @@ import STTNvidia from './stt-nvidia'
 import STTOpenAI from './stt-openai'
 import STTSpeechmatics from './stt-speechmatics'
 import STTMistral from './stt-mistral'
-import STTWhisper from './stt-whisper'
+import STTLocal from './stt-local'
 
 export type DownloadStatus = {
   state: 'initiate'|'download'|'done'
@@ -100,7 +100,7 @@ export const getSTTEngines = () => {
     //{ id: 'huggingface', label: engineNames.huggingface },
     { id: 'groq', label: engineNames.groq },
     // { id: 'mistralai', label: engineNames.mistralai },
-    { id: 'whisper', label: engineNames.whisper },
+    { id: 'local', label: engineNames.local },
     { id: 'custom', label: 'Custom OpenAI' },
   ]
 }
@@ -124,15 +124,15 @@ export const getSTTModels = (engine: string) => {
     return STTNvidia.models
   } else if (engine === 'mistralai') {
     return STTMistral.models
-  } else if (engine === 'whisper') {
-    return STTWhisper.models
+  } else if (engine === 'local') {
+    return STTLocal.models
   } else if (engine === 'custom') {
     return []
   }
 }
 
 export const getSTTEngine = (config: Configuration): STTEngine => {
-  const engine = config.stt.engine || 'whisper'
+  const engine = config.stt.engine || 'local'
   if (engine === 'openai') {
     return new STTOpenAI(config)
   } else if (engine === 'groq') {
@@ -143,8 +143,8 @@ export const getSTTEngine = (config: Configuration): STTEngine => {
     return new STTHuggingFace(config)
   } else if (engine === 'nvidia') {
     return new STTNvidia(config)
-  } else if (engine === 'whisper') {
-    return new STTWhisper(config)
+  } else if (engine === 'local') {
+    return new STTLocal(config)
   } else if (engine === 'gladia') {
     return new STTGladia(config)
   } else if (engine === 'fireworks') {
@@ -171,8 +171,8 @@ export const requiresDownload = (engine: string): boolean => {
     return STTHuggingFace.requiresDownload()
   } else if (engine === 'nvidia') {
     return STTNvidia.requiresDownload()
-  } else if (engine === 'whisper') {
-    return STTWhisper.requiresDownload()
+  } else if (engine === 'local') {
+    return STTLocal.requiresDownload()
   } else if (engine === 'gladia') {
     return STTGladia.requiresDownload()
   } else if (engine === 'fireworks') {

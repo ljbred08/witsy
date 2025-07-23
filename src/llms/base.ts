@@ -30,7 +30,7 @@ export const engineNames: Record<string, string> = {
   'replicate': 'Replicate',
   'sdwebui': 'Stable Diffusion web UI',
   'speechmatics': 'Speechmatics',
-  'whisper': 'Whisper',
+  'local': 'Local',
   'xai': 'xAI',
 }
 
