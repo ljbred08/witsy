@@ -16,8 +16,8 @@ export default class STTLocal implements STTEngine {
     { id: 'Xenova/whisper-base', label: 'Whisper Turbo Base (requires download)' },
     { id: 'Xenova/whisper-small', label: 'Whisper Turbo Small (requires download)' },
     { id: 'Xenova/whisper-medium', label: 'Whisper Turbo Medium (requires download)' },
-    { id: 'ibm-granite/granite-speech-3.3-2b', label: 'IBM Granite Speech 3.3 2B (requires download)' },
-    { id: 'ibm-granite/granite-speech-3.3-8b', label: 'IBM Granite Speech 3.3 8B (requires download)' },
+    //{ id: 'ibm-granite/granite-speech-3.3-2b', label: 'IBM Granite Speech 3.3 2B (requires download)' }, // Won't work until an ONNX conversion is available for Granite Speech.
+    //{ id: 'ibm-granite/granite-speech-3.3-8b', label: 'IBM Granite Speech 3.3 8B (requires download)' },
   ]
 
   constructor(config: Configuration) {
