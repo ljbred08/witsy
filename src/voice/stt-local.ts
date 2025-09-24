@@ -1,9 +1,18 @@
-
 import { Configuration } from 'types/config'
 import { STTEngine, ProgressCallback, ProgressInfo, TaskStatus, TranscribeResponse } from './stt'
+import {
+  createWhisperTranscriber,
+  isWhisperModelDownloaded,
+  deleteWhisperModel,
+  deleteAllWhisperModels,
+} from './local-models/local-whisper'
+import {
+  createParakeetTranscriber,
+  isParakeetModelDownloaded,
+  deleteParakeetModel,
+  deleteAllParakeetModels,
+} from './local-models/local-parakeet'
 
-// importing from @xenova/transformers leads to a runtime error
-import { env, pipeline } from '@huggingface/transformers'
 
 export default class STTLocal implements STTEngine {
 
@@ -16,13 +25,12 @@ export default class STTLocal implements STTEngine {
     { id: 'Xenova/whisper-base', label: 'Whisper Turbo Base (requires download)' },
     { id: 'Xenova/whisper-small', label: 'Whisper Turbo Small (requires download)' },
     { id: 'Xenova/whisper-medium', label: 'Whisper Turbo Medium (requires download)' },
-    //{ id: 'ibm-granite/granite-speech-3.3-2b', label: 'IBM Granite Speech 3.3 2B (requires download)' }, // Won't work until an ONNX conversion is available for Granite Speech.
-    //{ id: 'ibm-granite/granite-speech-3.3-8b', label: 'IBM Granite Speech 3.3 8B (requires download)' },
+    { id: 'nvidia/parakeet-tdt-0.6b-v2', label: 'NVIDIA Parakeet TDT 0.6B V2 (requires download)' },
+    //{ id: 'ibm-granite/granite-speech-3.3-2b', label: 'IBM Granite Speech 3.3 2B (requires export)' }, // Won't work until an ONNX conversion is available for Granite Speech.//{ id: 'ibm-granite/granite-speech-3.3-8b', label: 'IBM Granite Speech 3.3 8B (requires download)' },
   ]
 
   constructor(config: Configuration) {
     this.config = config
-    env.allowLocalModels = false
   }
 
   get name(): string {
@@ -31,15 +39,13 @@ export default class STTLocal implements STTEngine {
 
   isReady(): boolean {
     return this.ready
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  }// eslint-disable-next-line @typescript-eslint/no-unused-vars
   isStreamingModel(model: string): boolean {
-    return false
+    return false;
   }
 
   static requiresDownload(): boolean {
-    return true
+    return true;
   }
 
   requiresDownload(): boolean {
@@ -47,91 +53,105 @@ export default class STTLocal implements STTEngine {
   }
 
   async initialize(callback?: ProgressCallback): Promise<void> {
-
     try {
-
       const model = this.config.stt.model || 'Xenova/whisper-tiny'
-      this.transcriber = await pipeline('automatic-speech-recognition', model, {
-        ...(this.config.stt.whisper.gpu ? {
-          dtype: 'fp32',
-          device: 'webgpu',
-        } : {
-          dtype: 'q8',
-        }),
-        progress_callback: (data: ProgressInfo) => {
-          if ((data as TaskStatus).status === 'ready') {
-            this.ready = true
-          }
-          if (callback) {
-            callback(data)
-          }
-        },
-        // for medium models, we need to load the `no_attentions` revision to avoid running out of memory
-        revision: model.includes('/whisper-medium') ? 'no_attentions' : 'main'
-      })
 
+      // Offload model-specific initialization to dedicated handlers.
+      if (model.startsWith('Xenova/whisper')) {
+        this.transcriber = await this.whisperTranscriber(model, callback)
+      } else if (model === 'nvidia/parakeet-tdt-0.6b-v2') {
+        this.transcriber = await this.parakeetTranscriber(callback)
+      } else {
+        throw new Error(`Unsupported local STT model: ${model}`)
+      }
     } catch (error) {
       console.error(error)
       callback?.({ status: 'error', message: error.message })
     }
+  }
 
+  // Create a Whisper-specific transcriber function so other models can return compatible functions
+  private async whisperTranscriber(model: string, callback?: ProgressCallback): Promise<(audio: Float32Array, opts?: object) => Promise<TranscribeResponse>> {
+    // Delegate to shared Whisper transcriber implementation
+    // We need to wrap the callback to capture the ready status
+    const wrappedCallback = (data: ProgressInfo) => {
+      if ((data as TaskStatus).status === 'ready') {
+        this.ready = true
+      }
+      callback?.(data)
+    }
+    return createWhisperTranscriber(this.config, model, wrappedCallback)
+  }
+
+  // Create a Parakeet transcriber using sherpa-onnx-node
+  private async parakeetTranscriber(callback?: ProgressCallback): Promise<(audio: Float32Array, opts?: object) => Promise<TranscribeResponse>> {
+    const wrappedCallback = (data: ProgressInfo) => {
+      if ((data as TaskStatus).status === 'ready') {
+        this.ready = true
+      }
+      callback?.(data)
+    }
+    return createParakeetTranscriber(wrappedCallback)
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async transcribe(audioBlob: Blob, opts?: object): Promise<TranscribeResponse> {
-
     return new Promise((resolve, reject) => {
-
       try {
-
-        // we need to decode the audio file
+        // We need to decode the audio file
         const fileReader = new FileReader()
         fileReader.onloadend = async () => {
-          const audioCTX = new AudioContext({
-            sampleRate: 16000,
-          })
+          const audioCtx = new AudioContext({ sampleRate: 16000 })
           const arrayBuffer = fileReader.result as ArrayBuffer
-          const decoded = await audioCTX.decodeAudioData(arrayBuffer)
+          const decoded = await audioCtx.decodeAudioData(arrayBuffer)
 
-          // now we can send the audio data to the transcriber
+          // Now we can send the audio data to the transcriber
           const output = await this.transcriber(decoded.getChannelData(0), {
-            language: this.config.stt.locale?.substring(0, 2),
+            language: this.config.stt.locale?.substring(0, 2)
           })
           resolve(output)
-
         }
-        fileReader.readAsArrayBuffer(audioBlob);
-
+        fileReader.readAsArrayBuffer(audioBlob)
       } catch (error) {
-        console.error(error);
-        reject(error);
+        console.error(error)
+        reject(error)
       }
     })
   }
 
   async isModelDownloaded(model: string): Promise<boolean> {
-    const storage = await caches.open('transformers-cache')
-    const keys = await storage.keys()
-    for (const key of keys) {
-      if (key.url.includes(`/${model}/`)) {
-        return true
-      }
+    if (model.startsWith('Xenova/whisper')) {
+      return isWhisperModelDownloaded(model)
+    } else if (model === 'nvidia/parakeet-tdt-0.6b-v2') {
+      return isParakeetModelDownloaded()
     }
     return false
   }
 
   async deleteModel(model: string): Promise<void> {
-    const storage = await caches.open('transformers-cache')
-    const keys = await storage.keys()
-    for (const key of keys) {
-      if (key.url.includes(`/${model}/`)) {
-        await storage.delete(key)
-      }
+    if (model.startsWith('Xenova/whisper')) {
+      await deleteWhisperModel(model)
+    } else if (model === 'nvidia/parakeet-tdt-0.6b-v2') {
+      await deleteParakeetModel()
     }
   }
 
   async deleteAllModels(): Promise<void> {
-    await caches.delete('transformers-cache')
+    await deleteAllWhisperModels()
+    await deleteAllParakeetModels()
   }
-
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+

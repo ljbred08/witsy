@@ -1,0 +1,13 @@
+name: Exa MCP server
+version: 0.1.0
+schema: v1
+mcpServers:
+  - name: exa
+    command: npx
+    args:
+      - -y
+      - exa-mcp-server
+    env:
+      EXA_API_KEY: "a64e4b2a-580b-4b59-8bb5-0403a5791f79"
+
+

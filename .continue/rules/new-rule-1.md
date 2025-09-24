@@ -1,0 +1,8 @@
+---
+description: Edit
+---
+
+When using the edit_existing_file tool, FOLLOW THESE INSTRUCTIONS:
+Use this tool to edit an existing file. If you don't know the contents of the file, read it first. When addressing code modification requests, present a concise code snippet that emphasizes only the necessary changes and uses abbreviated placeholders for unmodified sections. For example: ```language /path/to/file // ... existing code ... {{ modified code here }} // ... existing code ... {{ another modification }} // ... rest of code ... ``` In existing files, you should always restate the function or class that the snippet belongs to: ```language /path/to/file // ... existing code ... function exampleFunction() { // ... existing code ... {{ modified code here }} // ... rest of function ... } // ... rest of code ... ``` Since users have access to their complete file, they prefer reading only the relevant modifications. It's perfectly acceptable to omit unmodified portions at the beginning, middle, or end of files using these "lazy" comments. Only provide the complete file when explicitly requested. Include a concise explanation of changes unless the user specifically asks for code only. Note this tool CANNOT be called in parallel.
+
+You MUST use that human-readable style with using comments like //...existing code... {{new code}} //...rest of code.... Do not just use some sort of ambiguous diff notation using @@.
