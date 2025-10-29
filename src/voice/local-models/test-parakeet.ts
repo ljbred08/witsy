@@ -22,13 +22,26 @@ import { dirname } from 'node:path'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
+// Type definitions for standalone testing
+type ProgressCallback = (data: ProgressInfo) => void
+
+interface ProgressInfo {
+  status: 'progress' | 'ready' | 'error'
+  message?: string
+}
+
+interface TranscribeResponse {
+  text: string
+}
+
 // Import our Parakeet implementation
+// (Works with ts-node or compiled with TypeScript)
 import {
   createParakeetTranscriber,
   ensureParakeetBundle,
   isParakeetModelDownloaded,
   deleteParakeetModel
-} from './local-parakeet.js'
+} from './local-parakeet'
 
 interface TestOptions {
   model?: 'v2' | 'v3'

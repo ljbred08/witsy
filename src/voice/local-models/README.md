@@ -19,9 +19,49 @@ This directory contains the implementation of NVIDIA Parakeet speech-to-text mod
 ## Files
 
 - **`local-parakeet.ts`**: Main implementation with model downloading, caching, and transcription
-- **`test-parakeet.ts`**: Comprehensive TypeScript test suite (requires compilation)
-- **`test-parakeet.mjs`**: Informational JavaScript script that shows how to test via Witsy
+- **`test-parakeet.ts`**: Comprehensive TypeScript test suite (works with ts-node)
+- **`test-parakeet-simple.mjs`**: Standalone JavaScript test script (no dependencies)
+- **`test-parakeet.mjs`**: Informational JavaScript script (usage guidance)
 - **`README.md`**: This documentation file
+
+## Testing the Implementation
+
+### Method 1: Use ts-node (Recommended for Testing Our Code)
+
+**Install ts-node:**
+```bash
+npm install -g ts-node
+```
+
+**Test the actual implementation:**
+```bash
+cd src/voice/local-models
+
+# List available models
+ts-node test-parakeet.ts --list
+
+# Download a model
+ts-node test-parakeet.ts --download v2
+
+# Test the model (requires sherpa-onnx-node)
+ts-node test-parakeet.ts --test v2
+```
+
+This tests your actual `local-parakeet.ts` implementation - the same code Witsy uses!
+
+### Method 2: Use Standalone Script
+
+For quick testing without dependencies:
+```bash
+cd src/voice/local-models
+
+# List models and download status
+node test-parakeet-simple.mjs --list
+
+# Download and test models
+node test-parakeet-simple.mjs --download v2
+node test-parakeet-simple.mjs --test v2
+```
 
 ## Usage in Witsy
 
@@ -87,14 +127,22 @@ The implementation supports:
 
 ## Troubleshooting
 
-### Common Issues
+### Testing Issues
+1. **ts-node errors**: Make sure TypeScript is installed (`npm install -g typescript`)
+2. **Module not found**: Ensure you're in the correct directory (`src/voice/local-models`)
+3. **sherpa-onnx-node missing**: Install with `npm install sherpa-onnx-node`
+4. **Permission denied**: Make sure test files are executable (`chmod +x *.mjs`)
+
+### Model Issues
 1. **Model Download Fails**: Check internet connection and try again
 2. **Transcription Errors**: Ensure audio is clear and at 16kHz sample rate
 3. **Memory Issues**: Close other applications if using larger models
 4. **FFmpeg Not Found**: Install FFmpeg for audio file conversion
 
 ### Debug Information
-Enable debug logging in Witsy settings to see detailed model loading and transcription progress.
+- Enable debug logging in Witsy settings to see detailed model loading progress
+- Use `ts-node --inspect test-parakeet.ts` for debugging
+- Check `~/.cache/sherpa-onnx/` for downloaded models
 
 ## Languages Supported (V3)
 
