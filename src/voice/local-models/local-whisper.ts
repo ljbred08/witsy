@@ -5,8 +5,18 @@ import { ProgressCallback, ProgressInfo, TaskStatus, TranscribeResponse } from '
 
 /**
  * Creates a Whisper transcriber function compatible with the STTLocal interface.
+ * This implementation ports the full functionality from the original STTWhisper class
+ * and includes proper error handling, progress callbacks, and model management.
+ *
  * The returned function accepts raw Float32Array audio data and optional options,
  * and resolves with a {@link TranscribeResponse}.
+ *
+ * Features ported from original STTWhisper:
+ * - GPU/CPU configuration support via config.stt.whisper.gpu
+ * - Progress callback handling with 'ready' status detection
+ * - Model-specific optimizations (no_attentions revision for medium models)
+ * - Proper error logging and callback error reporting
+ * - Language detection using config.stt.locale
  */
 export async function createWhisperTranscriber(
   config: Configuration,
@@ -17,24 +27,51 @@ export async function createWhisperTranscriber(
   // that was previously performed in STTLocal's constructor.
   env.allowLocalModels = false
 
-  const pipe = await pipeline('automatic-speech-recognition', model, {
-    ...(config.stt.whisper.gpu
-      ? {
-          dtype: 'fp32',
-          device: 'webgpu',
-        }
-      : {
-          dtype: 'q8',
-        }),
-    progress_callback: callback,
-    // For medium models, use the `no_attentions` revision to reduce RAM usage.
-    revision: model.includes('/whisper-medium') ? 'no_attentions' : 'main',
-  })
+  let transcriber: any
+  let ready = false
 
-  // Return a wrapper that matches the expected signature.
+  try {
+    transcriber = await pipeline('automatic-speech-recognition', model, {
+      ...(config.stt.whisper.gpu
+        ? {
+            dtype: 'fp32',
+            device: 'webgpu',
+          }
+        : {
+            dtype: 'q8',
+          }),
+      progress_callback: (data: ProgressInfo) => {
+        if ((data as TaskStatus).status === 'ready') {
+          ready = true
+        }
+        if (callback) {
+          callback(data)
+        }
+      },
+      // For medium models, use the `no_attentions` revision to reduce RAM usage.
+      revision: model.includes('/whisper-medium') ? 'no_attentions' : 'main',
+    })
+  } catch (error) {
+    console.error(['[whisper] error when initializing:', error])
+    callback?.({ status: 'error', message: (error as Error).message })
+    throw error
+  }
+
+  // Return a wrapper that matches the expected signature
   return async (audio: Float32Array, opts?: object) => {
-    const output = await pipe(audio, opts)
-    return output as TranscribeResponse
+    try {
+      // Merge default options with provided options
+      const transcribeOpts = {
+        language: config.stt.locale?.substring(0, 2),
+        ...opts,
+      }
+
+      const output = await transcriber(audio, transcribeOpts)
+      return output as TranscribeResponse
+    } catch (error) {
+      console.error('[whisper] transcription error:', error)
+      throw error
+    }
   }
 }
 
