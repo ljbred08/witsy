@@ -38,13 +38,20 @@ npm install -g ts-node
 cd src/voice/local-models
 
 # List available models
-ts-node test-parakeet.ts --list
+ts-node --esm --loader ts-node/esm test-parakeet.ts --list
 
 # Download a model
-ts-node test-parakeet.ts --download v2
+ts-node --esm --loader ts-node/esm test-parakeet.ts --download v2
 
 # Test the model (requires sherpa-onnx-node)
-ts-node test-parakeet.ts --test v2
+ts-node --esm --loader ts-node/esm test-parakeet.ts --test v2
+```
+
+**Alternative commands (if loader doesn't work):**
+```bash
+ts-node --project tsconfig.json --esm test-parakeet.ts --list
+ts-node --project tsconfig.json --esm test-parakeet.ts --download v2
+ts-node --project tsconfig.json --esm test-parakeet.ts --test v2
 ```
 
 This tests your actual `local-parakeet.ts` implementation - the same code Witsy uses!
@@ -128,8 +135,31 @@ The implementation supports:
 ## Troubleshooting
 
 ### Testing Issues
-1. **ts-node errors**: Make sure TypeScript is installed (`npm install -g typescript`)
-2. **Module not found**: Ensure you're in the correct directory (`src/voice/local-models`)
+
+#### ts-node ESM Errors
+**Error**: `The 'import.meta' meta-property is only allowed when the '--module' option is 'es2020', 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', or 'nodenext'.`
+
+**Solution**: Use ESM flags with ts-node:
+```bash
+# Working commands:
+ts-node --esm --loader ts-node/esm test-parakeet.ts --list
+
+# Alternative approach:
+ts-node --project tsconfig.json --esm test-parakeet.ts --list
+```
+
+#### Module Resolution Errors
+**Error**: `Cannot find module 'local-parakeet' imported from 'test-parakeet.ts'`
+
+**Solution**: Use the ts-node ESM loader:
+```bash
+# This fixes the module resolution issue:
+ts-node --esm --loader ts-node/esm test-parakeet.ts --list
+```
+
+#### General Issues
+1. **ts-node not found**: Install TypeScript globally (`npm install -g typescript ts-node`)
+2. **Wrong directory**: Ensure you're in `src/voice/local-models`
 3. **sherpa-onnx-node missing**: Install with `npm install sherpa-onnx-node`
 4. **Permission denied**: Make sure test files are executable (`chmod +x *.mjs`)
 
