@@ -6,11 +6,13 @@ import decompressTarbz2 from 'decompress-tarbz2'
 import * as sherpaOnnx from 'sherpa-onnx-node'
 import { ProgressCallback, TranscribeResponse } from '../stt'
 
-const PARAKEET_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2.tar.bz2'
+const PARAKEET_V2_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2'
+const PARAKEET_V3_MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2'
 
-export async function ensureParakeetBundle(): Promise<string> {
+export async function ensureParakeetBundle(modelVersion: 'v2' | 'v3'): Promise<string> {
   const cacheRoot = path.join(os.homedir(), '.cache', 'sherpa-onnx')
-  const outDir = path.join(cacheRoot, 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2')
+  const modelName = modelVersion === 'v2' ? 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2' : 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3'
+  const outDir = path.join(cacheRoot, modelName)
 
   // Check if model already exists
   try {
@@ -23,14 +25,15 @@ export async function ensureParakeetBundle(): Promise<string> {
 
   // Create cache directory
   await fs.mkdir(cacheRoot, { recursive: true })
-  const tarPath = path.join(cacheRoot, 'parakeet-tdt-0.6b-v2.tar.bz2')
+  const modelUrl = modelVersion === 'v2' ? PARAKEET_V2_MODEL_URL : PARAKEET_V3_MODEL_URL
+  const tarPath = path.join(cacheRoot, `parakeet-tdt-0.6b-${modelVersion}.tar.bz2`)
 
-  console.log('Downloading Parakeet model...')
-  const response = await fetch(PARAKEET_MODEL_URL)
+  console.log(`Downloading Parakeet ${modelVersion} model...`)
+  const response = await fetch(modelUrl)
   if (!response.ok) {
     throw new Error(`Download failed: ${response.status} ${response.statusText}`)
   }
-  
+
   const buffer = Buffer.from(await response.arrayBuffer())
   await fs.writeFile(tarPath, buffer)
 
@@ -44,13 +47,13 @@ export async function ensureParakeetBundle(): Promise<string> {
 }
 
 async function hasValidModelFiles(dir: string): Promise<boolean> {
-  const encoderExists = await fileExists(path.join(dir, 'encoder.onnx')) || 
+  const encoderExists = await fileExists(path.join(dir, 'encoder.onnx')) ||
                        await fileExists(path.join(dir, 'encoder.int8.onnx'))
-  const decoderExists = await fileExists(path.join(dir, 'decoder.onnx')) || 
+  const decoderExists = await fileExists(path.join(dir, 'decoder.onnx')) ||
                        await fileExists(path.join(dir, 'decoder.int8.onnx'))
-  const joinerExists = await fileExists(path.join(dir, 'joiner.onnx')) || 
+  const joinerExists = await fileExists(path.join(dir, 'joiner.onnx')) ||
                     await fileExists(path.join(dir, 'joiner.int8.onnx'))
-  
+
   return encoderExists && decoderExists && joinerExists
 }
 
@@ -63,67 +66,74 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-export async function findModelFiles(bundleDir: string) {
+async function findModelFiles(bundleDir: string): Promise<{ tokens: string, encoder?: string, decoder?: string, joiner?: string, ctcModel?: string }> {
+  const files = await fs.readdir(bundleDir)
   const tokens = path.join(bundleDir, 'tokens.txt')
-  
-  // Check for transducer model files
-  const encoder = await findFirstValidFile([
-    path.join(bundleDir, 'encoder.int8.onnx'),
-    path.join(bundleDir, 'encoder.onnx'),
-  ])
-  
-  const decoder = await findFirstValidFile([
-    path.join(bundleDir, 'decoder.int8.onnx'),
-    path.join(bundleDir, 'decoder.onnx'),
-  ])
-  
-  const joiner = await findFirstValidFile([
-    path.join(bundleDir, 'joiner.int8.onnx'),
-    path.join(bundleDir, 'joiner.onnx'),
-  ])
-  
-  return { tokens, encoder, decoder, joiner }
-}
 
-async function findFirstValidFile(filePaths: string[]): Promise<string | undefined> {
-  for (const filePath of filePaths) {
-    try {
-      await fs.access(filePath)
-      return filePath
-    } catch {
-      continue
-    }
+  // Check for Transducer model files
+  const encoder = files.find(f => f.startsWith('encoder')) ? path.join(bundleDir, files.find(f => f.startsWith('encoder'))!) : undefined
+  const decoder = files.find(f => f.startsWith('decoder')) ? path.join(bundleDir, files.find(f => f.startsWith('decoder'))!) : undefined
+  const joiner = files.find(f => f.startsWith('joiner')) ? path.join(bundleDir, files.find(f => f.startsWith('joiner'))!) : undefined
+
+  if (encoder && decoder && joiner) {
+    return { tokens, encoder, decoder, joiner }
   }
-  return undefined
+
+  // Check for CTC model files
+  const ctcModel = files.find(f => f.startsWith('model')) ? path.join(bundleDir, files.find(f => f.startsWith('model'))!) : undefined
+
+  return { tokens, ctcModel }
 }
 
 export async function createParakeetTranscriber(
+  model: string,
   callback: ProgressCallback
 ): Promise<(audio: Float32Array, opts?: object) => Promise<TranscribeResponse>> {
   if (!sherpaOnnx) {
     throw new Error('sherpa-onnx-node is not available')
   }
 
-  callback?.({ status: 'progress', message: 'Downloading Parakeet model...' })
-  const bundleDir = await ensureParakeetBundle()
+  const modelVersion = model.includes('v3') ? 'v3' : 'v2'
+  callback?.({ status: 'progress', message: `Downloading Parakeet ${modelVersion} model...` })
+  const bundleDir = await ensureParakeetBundle(modelVersion)
 
   callback?.({ status: 'progress', message: 'Loading model files...' })
-  const { tokens, encoder, decoder, joiner } = await findModelFiles(bundleDir)
+  const { tokens, encoder, decoder, joiner, ctcModel } = await findModelFiles(bundleDir)
 
-  if (!encoder || !decoder || !joiner || !tokens) {
+  if (!tokens) {
     throw new Error('Required model files not found')
   }
 
-  const config = {
-    featConfig: { sampleRate: 16000, featureDim: 80 },
-    modelConfig: {
-      transducer: { encoder, decoder, joiner },
-      tokens,
-      numThreads: 2,
-      provider: 'cpu',
-      debug: 0,
-      modelType: 'nemo_transducer',
-    },
+  let config: any
+
+  if (encoder && decoder && joiner) {
+    // Transducer model configuration
+    config = {
+      featConfig: { sampleRate: 16000, featureDim: 80 },
+      modelConfig: {
+        transducer: { encoder, decoder, joiner },
+        tokens,
+        numThreads: 2,
+        provider: 'cpu',
+        debug: 0,
+        modelType: 'nemo_transducer',
+      },
+    }
+  } else if (ctcModel) {
+    // CTC model configuration
+    config = {
+      featConfig: { sampleRate: 16000, featureDim: 80 },
+      modelConfig: {
+        nemoCtc: { model: ctcModel },
+        tokens,
+        numThreads: 2,
+        provider: 'cpu',
+        debug: 0,
+        modelType: 'nemo_ctc',
+      },
+    }
+  } else {
+    throw new Error('Invalid model configuration')
   }
 
   const recognizer = new sherpaOnnx.OfflineRecognizer(config)
@@ -137,84 +147,42 @@ export async function createParakeetTranscriber(
 
     const result = recognizer.getResult(stream)
     const text = result?.text || ''
+
     return { text } as TranscribeResponse
+  }
+}
+
+/** Checks if the Parakeet model bundle is already downloaded and valid */
+export async function isParakeetModelDownloaded(modelVersion: 'v2' | 'v3'): Promise<boolean> {
+  const cacheRoot = path.join(os.homedir(), '.cache', 'sherpa-onnx')
+  const modelName = modelVersion === 'v2' ? 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2' : 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3'
+  const outDir = path.join(cacheRoot, modelName)
+  try {
+    await fs.access(outDir)
+    return await hasValidModelFiles(outDir)
+  } catch {
+    return false
   }
 }
-+
-+/** Checks if the Parakeet model bundle is already downloaded and valid */
-+export async function isParakeetModelDownloaded(): Promise<boolean> {
-+  const cacheRoot = path.join(os.homedir(), '.cache', 'sherpa-onnx')
-+  const outDir = path.join(cacheRoot, 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2')
-+  try {
-+    await fs.access(outDir)
-+    return await hasValidModelFiles(outDir)
-+  } catch {
-+    return false
-+  }
-+}
-+
-+/** Deletes the downloaded Parakeet model bundle */
-+export async function deleteParakeetModel(): Promise<void> {
-+  const cacheRoot = path.join(os.homedir(), '.cache', 'sherpa-onnx')
-+  const outDir = path.join(cacheRoot, 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2')
-+  try {
-+    await fs.rm(outDir, { recursive: true, force: true })
-+  } catch {
-+    // ignore errors
-+  }
-+}
-+
-+/** Deletes all cached Parakeet model bundles */
-+export async function deleteAllParakeetModels(): Promise<void> {
-+  const cacheRoot = path.join(os.homedir(), '.cache', 'sherpa-onnx')
-+  try {
-+    await fs.rm(cacheRoot, { recursive: true, force: true })
-+  } catch {
-+    // ignore errors
-+  }
-+}
-  callback: ProgressCallback
-): Promise<(audio: Float32Array, opts?: object) => Promise<TranscribeResponse>> {
-  if (!sherpaOnnx) {
-    throw new Error('sherpa-onnx-node is not available')
+
+/** Deletes the downloaded Parakeet model bundle */
+export async function deleteParakeetModel(modelVersion: 'v2' | 'v3'): Promise<void> {
+  const cacheRoot = path.join(os.homedir(), '.cache', 'sherpa-onnx')
+  const modelName = modelVersion === 'v2' ? 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2' : 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3'
+  const outDir = path.join(cacheRoot, modelName)
+  try {
+    await fs.rm(outDir, { recursive: true, force: true })
+  } catch {
+    // ignore errors
   }
+}
 
-  callback?.({ status: 'progress', message: 'Downloading Parakeet model...' })
-  const bundleDir = await ensureParakeetBundle()
-
-  callback?.({ status: 'progress', message: 'Loading model files...' })
-  const { tokens, encoder, decoder, joiner } = await findModelFiles(bundleDir)
-
-  if (!encoder || !decoder || !joiner || !tokens) {
-    throw new Error('Required model files not found')
-  }
-
-  const config = {
-    featConfig: { sampleRate: 16000, featureDim: 80 },
-    modelConfig: {
-      transducer: { encoder, decoder, joiner },
-      tokens,
-      numThreads: 2,
-      provider: 'cpu',
-      debug: 0,
-      modelType: 'nemo_transducer',
-    },
-  }
-
-  const recognizer = new sherpaOnnx.OfflineRecognizer(config)
-  callback?.({ status: 'ready' })
-
-  return async (audio: Float32Array, opts?: object) => {
-    // Convert Float32Array to the format expected by sherpa-onnx
-    const samples = Array.from(audio)
-    const stream = recognizer.createStream()
-
-    stream.acceptWaveform({ sampleRate: 16000, samples })
-    recognizer.decode(stream)
-
-    const result = recognizer.getResult(stream)
-    const text = result?.text || ''
-
-    return { text } as TranscribeResponse
+/** Deletes all cached Parakeet model bundles */
+export async function deleteAllParakeetModels(): Promise<void> {
+  const cacheRoot = path.join(os.homedir(), '.cache', 'sherpa-onnx')
+  try {
+    await fs.rm(cacheRoot, { recursive: true, force: true })
+  } catch {
+    // ignore errors
   }
 }

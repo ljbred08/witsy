@@ -25,7 +25,8 @@ export default class STTLocal implements STTEngine {
     { id: 'Xenova/whisper-base', label: 'Whisper Turbo Base (requires download)' },
     { id: 'Xenova/whisper-small', label: 'Whisper Turbo Small (requires download)' },
     { id: 'Xenova/whisper-medium', label: 'Whisper Turbo Medium (requires download)' },
-    { id: 'nvidia/parakeet-tdt-0.6b-v2', label: 'NVIDIA Parakeet TDT 0.6B V2 (requires download)' },
+    { id: 'nvidia/parakeet-tdt-0.6b-v2', label: 'NVIDIA Parakeet TDT 0.6B V2 (English, requires download)' },
+    { id: 'nvidia/parakeet-tdt-0.6b-v3', label: 'NVIDIA Parakeet TDT 0.6B V3 Multilingual (requires download)' },
     //{ id: 'ibm-granite/granite-speech-3.3-2b', label: 'IBM Granite Speech 3.3 2B (requires export)' }, // Won't work until an ONNX conversion is available for Granite Speech.//{ id: 'ibm-granite/granite-speech-3.3-8b', label: 'IBM Granite Speech 3.3 8B (requires download)' },
   ]
 
@@ -59,8 +60,8 @@ export default class STTLocal implements STTEngine {
       // Offload model-specific initialization to dedicated handlers.
       if (model.startsWith('Xenova/whisper')) {
         this.transcriber = await this.whisperTranscriber(model, callback)
-      } else if (model === 'nvidia/parakeet-tdt-0.6b-v2') {
-        this.transcriber = await this.parakeetTranscriber(callback)
+      } else if (model === 'nvidia/parakeet-tdt-0.6b-v2' || model === 'nvidia/parakeet-tdt-0.6b-v3') {
+        this.transcriber = await this.parakeetTranscriber(model, callback)
       } else {
         throw new Error(`Unsupported local STT model: ${model}`)
       }
@@ -84,14 +85,14 @@ export default class STTLocal implements STTEngine {
   }
 
   // Create a Parakeet transcriber using sherpa-onnx-node
-  private async parakeetTranscriber(callback?: ProgressCallback): Promise<(audio: Float32Array, opts?: object) => Promise<TranscribeResponse>> {
+  private async parakeetTranscriber(model: string, callback?: ProgressCallback): Promise<(audio: Float32Array, opts?: object) => Promise<TranscribeResponse>> {
     const wrappedCallback = (data: ProgressInfo) => {
       if ((data as TaskStatus).status === 'ready') {
         this.ready = true
       }
       callback?.(data)
     }
-    return createParakeetTranscriber(wrappedCallback)
+    return createParakeetTranscriber(model, wrappedCallback)
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -123,7 +124,9 @@ export default class STTLocal implements STTEngine {
     if (model.startsWith('Xenova/whisper')) {
       return isWhisperModelDownloaded(model)
     } else if (model === 'nvidia/parakeet-tdt-0.6b-v2') {
-      return isParakeetModelDownloaded()
+      return isParakeetModelDownloaded('v2')
+    } else if (model === 'nvidia/parakeet-tdt-0.6b-v3') {
+      return isParakeetModelDownloaded('v3')
     }
     return false
   }
@@ -132,7 +135,9 @@ export default class STTLocal implements STTEngine {
     if (model.startsWith('Xenova/whisper')) {
       await deleteWhisperModel(model)
     } else if (model === 'nvidia/parakeet-tdt-0.6b-v2') {
-      await deleteParakeetModel()
+      await deleteParakeetModel('v2')
+    } else if (model === 'nvidia/parakeet-tdt-0.6b-v3') {
+      await deleteParakeetModel('v3')
     }
   }
 
