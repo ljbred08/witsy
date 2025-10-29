@@ -11,29 +11,30 @@
 <script setup lang="ts">
 
 import { LlmChunkContent } from 'multi-llm-ts'
-import { strDict, Agent, A2APromptOpts } from '../types'
-import { MenuBarMode } from '../components/MenuBar.vue'
-import { ref, onMounted, nextTick, watch } from 'vue'
-import { store } from '../services/store'
-import { t } from '../services/i18n'
-import { saveFileContents } from '../services/download'
-import { SendPromptParams } from '../components/Prompt.vue'
-import Dialog from '../composables/dialog'
-import useTipsManager from '../composables/tips_manager'
-import ChatSidebar from '../components/ChatSidebar.vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import ChatArea from '../components/ChatArea.vue'
+import ChatSidebar from '../components/ChatSidebar.vue'
+import { MenuBarMode } from '../components/MenuBar.vue'
+import { SendPromptParams } from '../components/Prompt.vue'
 import PromptBuilder from '../components/PromptBuilder.vue'
-import ChatEditor, { ChatEditorCallback } from './ChatEditor.vue'
-import AgentPicker from './AgentPicker.vue'
-import Generator, { GenerationEvent } from '../services/generator'
-import Assistant from '../services/assistant'
-import AgentRunner, { isAgentConversation } from '../services/runner'
-import Message from '../models/message'
-import Chat from '../models/chat'
-import LlmFactory from '../llms/llm'
-
-// bus
+import Dialog from '../composables/dialog'
 import useEventBus from '../composables/event_bus'
+import useTipsManager from '../composables/tips_manager'
+import LlmFactory from '../llms/llm'
+import Chat from '../models/chat'
+import Message from '../models/message'
+import { createAgentExecutor, isAgentConversation } from '../services/agent_utils'
+import Assistant from '../services/assistant'
+import { saveFileContents } from '../services/download'
+import { GenerationEvent } from '../services/generator'
+import { t } from '../services/i18n'
+import LlmUtils from '../services/llm_utils'
+import { store } from '../services/store'
+import { A2APromptOpts, Agent } from '../types/agents'
+import { strDict } from '../types/index'
+import AgentPicker from './AgentPicker.vue'
+import ChatEditor, { ChatEditorCallback } from './ChatEditor.vue'
+
 const { onEvent, emitEvent } = useEventBus()
 
 // init stuff
@@ -50,13 +51,11 @@ const chatEditorCallback= ref<ChatEditorCallback>(() => {})
 const builder = ref<typeof PromptBuilder>(null)
 const picker = ref<typeof AgentPicker>(null)
 const agent = ref<Agent|null>(null)
+let abortController: AbortController | null = null
 
 const props = defineProps({
   extra: Object
 })
-
-// to stop generation
-let activeGenerator: Generator = assistant.value as unknown as Generator
 
 onMounted(() => {
 
@@ -147,6 +146,13 @@ onMounted(() => {
         console.log('Chat not found', params.chatId)
       }
     }
+    if (params?.text) {
+      console.log('[chat] setting prompt text', params.text)
+      nextTick(() => {
+        chatArea.value?.setPrompt(params.text)
+        chatArea.value?.focusPrompt()
+      })
+    }
   }, { immediate: true })
 
 })
@@ -229,6 +235,7 @@ const onRenameChat = async (chat: Chat) => {
     title: t('main.chat.rename'),
     input: 'text',
     inputValue: chat.title,
+    confirmButtonText: t('common.rename'),
     showCancelButton: true,
   });
   if (title) {
@@ -255,6 +262,7 @@ const onMoveChat = async (chatId: string|string[]) => {
       acc[f.id] = f.name
       return acc
     }, {}),
+    confirmButtonText: t('common.move'),
     showCancelButton: true,
   });
   if (folderId) {
@@ -382,7 +390,7 @@ const forkChat = (chat: Chat, message: Message, title: string, engine: string, m
       attachments: message.attachments,
       docrepo: fork.docrepo,
       expert: message.expert,
-      deepResearch: message.deepResearch || false,
+      execType: message.execType || 'prompt',
     })
   }
 }
@@ -413,6 +421,7 @@ const onRenameFolder = async (folderId: string) => {
       title: t('main.folder.rename'),
       input: 'text',
       inputValue: folder.name,
+      confirmButtonText: t('common.rename'),
       showCancelButton: true,
     });
     if (name) {
@@ -431,6 +440,7 @@ const onDeleteFolder = async (folderId: string) => {
     denyButtonText: t('main.folder.deleteConversations'),
     showCancelButton: true,
     showDenyButton: true,
+    customClass: { 'actions': 'actions-stacked' }
   })
 
   if (result.isDismissed) {
@@ -454,7 +464,7 @@ const onDeleteFolder = async (folderId: string) => {
 const onSendPrompt = async (params: SendPromptParams) => {
 
   // deconstruct params
-  const { instructions, prompt, attachments, docrepo, expert, deepResearch } = params
+  const { instructions, prompt, attachments, docrepo, expert, execType } = params
 
   // if the chat is still in an agentic context then run the agent
   const agent = isAgentConversation(assistant.value.chat)
@@ -466,7 +476,16 @@ const onSendPrompt = async (params: SendPromptParams) => {
   // make sure we can have an llm
   assistant.value.initLlm(store.config.llm.engine)
   if (!assistant.value.hasLlm()) {
-    nextTick(() => window.api.settings.open({ initialTab: 'models' }))
+    const rc = await Dialog.show({
+      title: t('prompt.noEngineAvailable.title'),
+      text: t('prompt.noEngineAvailable.text'),
+      showCancelButton: true,
+      confirmButtonText: t('common.yes'),
+      cancelButtonText: t('common.no'),
+    })
+    if (rc.isConfirmed) {
+      window.api.settings.open({ initialTab: 'models' })
+    }
     return
   }
 
@@ -487,8 +506,8 @@ const onSendPrompt = async (params: SendPromptParams) => {
     return llmManager.isComputerUseModel(assistant.value.chat.engine, assistant.value.chat.model)
   }
 
-  // save it to stop it
-  activeGenerator = assistant.value as unknown as Generator
+  // create abort controller for this prompt
+  abortController = new AbortController()
 
   // prompt
   const rc = await assistant.value.prompt(prompt, {
@@ -497,7 +516,8 @@ const onSendPrompt = async (params: SendPromptParams) => {
     attachments: attachments || [],
     docrepo: docrepo || null,
     expert: expert || null,
-    deepResearch: deepResearch || false,
+    execType: execType || 'prompt',
+    abortSignal: abortController.signal,
   }, (chunk) => {
   
     // if we get a chunk, emit it
@@ -552,10 +572,17 @@ const onSendPrompt = async (params: SendPromptParams) => {
 
 }
 
-const onRunAgent = async () => {
+const onRunAgent = async (agentId?: string) => {
 
-  // show agent picker
-  agent.value = await picker.value.pick()
+  // select agent
+  if (agentId) {
+    agent.value = store.agents.find((a) => a.uuid === agentId)
+  } else {
+    agent.value = await picker.value.pick()
+  }
+
+
+  // required
   if (!agent.value) {
     return
   }
@@ -575,15 +602,19 @@ const onRunAgent = async () => {
 
 const runAgent = async (agent: Agent, prompt: string, a2aContext?: A2APromptOpts) => {
 
-  // now we can run it with streaming
-  const runner = new AgentRunner(store.config, agent)
-  activeGenerator = runner
-  await runner.run('manual', prompt, {
+  // create abort controller for this agent run
+  abortController = new AbortController()
+
+  // create executor for this agent
+  const executor = createAgentExecutor(store.config, store.workspace.uuid, agent)
+
+  await executor.run('manual', prompt, {
     streaming: true,
     ephemeral: false,
     model: assistant.value.chat.model,
     chat: assistant.value.chat,
-    a2aContext: a2aContext
+    a2aContext: a2aContext,
+    abortSignal: abortController.signal,
   }, async (event: GenerationEvent) => {
 
     if (event === 'before_generation') {
@@ -648,7 +679,7 @@ const onRetryGeneration = async (message: Message) => {
       attachments: lastMessage.attachments,
       docrepo: assistant.value.chat.docrepo,
       expert: lastMessage.expert,
-      deepResearch: lastMessage.deepResearch || false,
+      execType: lastMessage.execType,
     })
 
   }
@@ -656,7 +687,7 @@ const onRetryGeneration = async (message: Message) => {
 }
 
 const onStopGeneration = async () => {
-  await activeGenerator?.stop()
+  abortController?.abort()
 }
 
 const onUpdateAvailable = () => {
@@ -692,7 +723,8 @@ const onMainViewChanged = (mode: MenuBarMode) => {
   assistant.value.chat.engine = 'anthropic'
   assistant.value.chat.model = 'computer-use'
 
-  const instructions = new Message('system', assistant.value.getSystemInstructions())
+  const llmUtils = new LlmUtils(store.config)
+  const instructions = new Message('system', llmUtils.getSystemInstructions())
   assistant.value.chat.addMessage(instructions)
 
   const message = new Message('assistant', t('computerUse.instructions'))
@@ -713,5 +745,12 @@ defineExpose({
 </script>
 
 <style scoped>
+
+/* Chat list adds one pixel
+   To the main window's height somehow
+   We don't know why though */
+.chat.split-pane {
+  height: calc(100vh - var(--window-toolbar-height) - 2.5rem - 1px) !important;
+}
 
 </style>

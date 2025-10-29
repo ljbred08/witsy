@@ -1,6 +1,7 @@
 
-import { ToolCall, MessageType, Message as IMessage, A2APromptOpts } from '../types'
-import { LlmRole, LlmChunkTool, LlmUsage, Message as MessageBase, LlmChunkContent } from 'multi-llm-ts'
+import { LlmChunkContent, LlmChunkTool, LlmRole, LlmUsage, Message as MessageBase } from 'multi-llm-ts'
+import { Message as IMessage, MessageExecutionType, MessageType, ToolCall } from '../types'
+import { A2APromptOpts } from '../types/agents'
 import Attachment from './attachment'
 import Expert from './expert'
 
@@ -9,6 +10,7 @@ export default class Message extends MessageBase implements IMessage {
   uuid: string
   type: MessageType
   uiOnly: boolean
+  execType: MessageExecutionType
   createdAt: number
   engine: string
   model: string
@@ -16,7 +18,6 @@ export default class Message extends MessageBase implements IMessage {
   agentId?: string
   agentRunId?: string
   a2aContext?: A2APromptOpts
-  deepResearch: boolean
   transient: boolean
   status?: string
   toolCalls: ToolCall[]
@@ -32,7 +33,7 @@ export default class Message extends MessageBase implements IMessage {
     this.createdAt = Date.now()
     this.type = 'text'
     this.uiOnly = false
-    this.deepResearch = false
+    this.execType = 'prompt'
     this.toolCalls = []
     this.attachments = []
     this.transient = (content == null)
@@ -50,6 +51,7 @@ export default class Message extends MessageBase implements IMessage {
     message.uiOnly = obj.uiOnly || false
     message.engine = obj.engine || null
     message.model = obj.model || null
+    message.execType = obj.execType || (obj.deepResearch ? 'deepresearch' : (obj.agentId ? 'agent' : 'prompt'))
     message.createdAt = obj.createdAt
     message.attachments = 
       obj.attachment ? [ Attachment.fromJson(obj.attachment) ] :
@@ -60,7 +62,6 @@ export default class Message extends MessageBase implements IMessage {
     message.agentId = obj.agentId || undefined
     message.agentRunId = obj.agentRunId || undefined
     message.a2aContext = obj.a2aContext || undefined
-    message.deepResearch = obj.deepResearch || false
     message.toolCalls = obj.toolCalls || obj.toolCall?.calls?.map((tc: any, idx: number) => ({
       ...tc,
       id: (idx + 1).toString(),
@@ -97,10 +98,12 @@ export default class Message extends MessageBase implements IMessage {
     this.status = status
   }
 
-  setExpert(expert: Expert, fallbackPrompt: string): void {
-    if (!expert) return
+  setExpert(expert: Expert): void {
+    if (!expert) {
+      this.expert = undefined
+      return
+    }
     this.expert = JSON.parse(JSON.stringify(expert))
-    this.expert.prompt = this.expert.prompt || fallbackPrompt
   }
 
   setText(text: string): void {
@@ -133,6 +136,7 @@ export default class Message extends MessageBase implements IMessage {
 
     // if found update else add
     if (call) {
+      call.state = toolCall.state
       call.done = toolCall.done
       call.status = toolCall.status
       call.params = toolCall.call?.params || null
@@ -141,6 +145,7 @@ export default class Message extends MessageBase implements IMessage {
       this.toolCalls.push({
         id: toolCall.id,
         name: toolCall.name,
+        state: toolCall.state,
         status: toolCall.status,
         done: toolCall.done,
         params: toolCall.call?.params || null,

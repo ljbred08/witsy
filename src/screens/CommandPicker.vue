@@ -4,14 +4,15 @@
       <div class="app" v-if="sourceApp">
         <img class="icon" :src="iconData" /> {{ t('common.workingWith') }} {{ sourceApp.name }}
       </div>
-      <div class="list" ref="list"> <div class="command" v-for="command in commands" :key="command.id" :class="{ selected: selected?.id == command.id }" @mousemove="onMouseMove(command)" @click="onRunCommand($event, command)">
+      <div class="list" ref="list">
+        <div class="command" v-for="command in commands" :key="command.id" :class="{ selected: selected?.id == command.id }" @mousemove="onMouseMove(command)" @click="onRunCommand($event, command)">
           <div class="icon">{{ command.icon }}</div>
           <div class="label">{{ command.label ?? commandI18n(command, 'label') }}</div>
           <div class="shortcut" v-if="command.shortcut">{{ command.shortcut }}</div>
         </div>
       </div>
       <div class="usage" @click="onUsage">
-        <BIconInfoCircle /> {{ t(usageId) }}
+        <InfoIcon /> {{ t(usageId) }}
       </div>
     </template>
     <template v-else>
@@ -25,11 +26,12 @@
 
 <script setup lang="ts">
 
+import { InfoIcon } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { commandI18n, t } from '../services/i18n'
+import { store } from '../services/store'
 import { anyDict, Command, ExternalApp } from '../types'
 import { CommandAction } from '../types/automation'
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { store } from '../services/store'
-import { t, commandI18n } from '../services/i18n'
 
 // load store
 store.loadSettings()
@@ -218,9 +220,9 @@ const onUsage = () => {
   padding: 0.5rem;
   height: 100vh;
   /* box-shadow: var(--window-box-shadow); */
-  background-color: var(--window-bg-color);
+  background-color: var(--context-menu-bg-color);
+  color: var(--context-menu-text-color);
   border-radius: 0.5rem;
-  color: var(--text-color);
   display: flex;
   flex-direction: column;
 }
@@ -230,17 +232,17 @@ const onUsage = () => {
   flex-direction: row;
   background-color: var(--source-app-bg-color);
   color: var(--source-app-text-color);
-  border-radius: 6px;
+  border-radius: 0.5rem;
   align-items: center;
-  padding: 2px 8px;
-  margin-bottom: 8px;
-  font-size: 10pt;
-  font-weight: 500;
+  padding: 0.25rem 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 14.5px;
+  font-weight: var(--font-weight-medium);
 
   .icon {
-    width: 24px;
-    height: 24px;
-    margin-right: 4px;
+    width: var(--icon-xl);
+    height: var(--icon-xl);
+    margin-right: 0.5rem;
   }
 }
 
@@ -258,30 +260,25 @@ const onUsage = () => {
   display: flex;
   flex-direction: row;
   align-items: center;
-  padding: 4px 8px;
-  font-size: 10pt;
-  font-family: -apple-system;
-}
-
-.commands:has(.app) .command:first-child {
-  padding-top: 2px;
+  padding: 0.375rem;
+  font-size: 14.5px;
 }
 
 .command.selected {
   background-color: var(--highlight-color);
   color: var(--highlighted-color);
-  border-radius: 6px;
+  border-radius: 0.375rem;
 }
 
 .icon {
   flex: 0 0 24px;
-  font-size: 13pt;
+  font-size: 17.5px;
   text-align: center;
   margin-right: 4px;
 }
 
 .windows .icon {
-  font-size: 12pt;
+  font-size: 16px;
   font-family: 'NotoColorEmojiLimited'
 }
 
@@ -298,7 +295,7 @@ const onUsage = () => {
   border: 1px solid var(--icon-color);
   color: var(--icon-color);
   border-radius: 4px;
-  font-size: 8pt;
+  font-size: 10.5px;
   text-transform: capitalize;
   padding: 0px 4px;
   margin-right: 8px
@@ -325,8 +322,8 @@ const onUsage = () => {
 .usage {
   cursor: pointer;
   padding: 0.5rem 0.75rem;
-  font-size: 9.5pt;
-  color: var(--dimmed-text-color);
+  font-size: 12.5px;
+  color: var(--faded-text-color);
   svg {
     margin-right: 0.25rem;
     position: relative;
@@ -339,8 +336,8 @@ const onUsage = () => {
   padding-bottom: 1rem;
   display: flex;
   flex-direction: column;
-  font-size: 11.5pt;
-  color: var(--text-color);
+  font-size: 15.5px;
+  color: var(--faded-text-color);
   overflow: auto;
 
   .close {
@@ -351,9 +348,9 @@ const onUsage = () => {
     height: 1.5rem;
     padding-top: 1rem;
     padding-right: 1rem;
-    background-color: var(--window-bg-color );
-    color: var(--dimmed-text-color);
-    font-size: 10pt;
+    background-color: var(--context-menu-bg-color);
+    color: var(--faded-text-color);
+    font-size: 13.5px;
     text-align: right;
     cursor: pointer;
   }

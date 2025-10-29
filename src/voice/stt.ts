@@ -6,12 +6,13 @@ import STTFireworks from './stt-fireworks'
 import STTGladia from './stt-gladia'
 import STTGroq from './stt-groq'
 import STTHuggingFace from './stt-huggingface'
+import STTMistral from './stt-mistral'
 import STTNvidia from './stt-nvidia'
 import STTOpenAI from './stt-openai'
-import STTSpeechmatics from './stt-speechmatics'
-import STTMistral from './stt-mistral'
-import STTLocal from './stt-local'
 import STTSoniox from './stt-soniox'
+import STTSpeechmatics from './stt-speechmatics'
+import STTLocal from './stt-local'
+
 
 export type DownloadStatus = {
   state: 'initiate'|'download'|'done'
@@ -48,6 +49,11 @@ export type TranscribeResponse = {
 export type StreamingChunkText = {
   type: 'text'
   content: string
+  // Enhanced token support for better UI handling
+  finalText?: string        // Final/confirmed text (shown in black)
+  partialText?: string      // Partial/temporary text (shown in grey)
+  hasFinalContent?: boolean // True if this update contains final content
+  hasPartialContent?: boolean // True if this update contains partial content
 }
 
 export type StreamingChunkStatus = {
@@ -90,6 +96,36 @@ export interface STTEngine {
   transcribeFile?(file: File, opts?: object): Promise<TranscribeResponse>
 }
 
+export const isSTTReady = (config: Configuration): boolean => {
+
+  // basic checks
+  if (!isAudioRecordingSupported()) return false
+  if (!config.stt.engine) return false
+
+  // custom needs a base URL
+  if (config.stt.engine === 'custom') {
+    if (!config.stt.customOpenAI?.baseURL?.length) {
+      return false
+    }
+  }
+
+  // other require api keys
+  if (!config.engines[config.stt.engine]?.apiKey?.length) {
+    return false
+  }
+
+  // last but not least: we need a model!
+  const model = config.stt.model
+  if (!model?.length) return false
+  const models = getSTTModels(config.stt.engine)
+  if (!models || !models.length) return false
+  if (!models.map(m => m.id).includes(model)) return false
+
+  // all good!
+  return true
+
+}
+
 export const getSTTEngines = () => {
   return [
     { id: 'openai', label: engineNames.openai },
@@ -101,7 +137,7 @@ export const getSTTEngines = () => {
     //{ id: 'huggingface', label: engineNames.huggingface },
     { id: 'groq', label: engineNames.groq },
     { id: 'mistralai', label: engineNames.mistralai },
-    // { id: 'soniox', label: engineNames.soniox },
+    { id: 'soniox', label: engineNames.soniox },
     { id: 'local', label: engineNames.local },
     { id: 'custom', label: 'Custom OpenAI' },
   ]

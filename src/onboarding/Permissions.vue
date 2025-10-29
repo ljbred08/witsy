@@ -15,14 +15,14 @@
         <!-- Accessibility Permission -->
         <div class="permission-card" :class="{ 'granted': accessibilityGranted, 'denied': !accessibilityGranted }">
           <div class="permission-icon">
-            <BIconUniversalAccessCircle />
+            <CircleUserIcon />
           </div>
           <div class="permission-info">
             <h3>{{ t('onboarding.permissions.accessibility.title') }}</h3>
             <p>{{ t('onboarding.permissions.accessibility.description') }}</p>
             <div class="permission-status">
-              <BIconCheckCircleFill v-if="accessibilityGranted" class="status-icon granted" />
-              <BIconXCircleFill v-else class="status-icon denied" />
+              <CheckCircleIcon v-if="accessibilityGranted" class="status-icon granted" />
+              <XCircleIcon v-else class="status-icon denied" />
               <span>{{ accessibilityGranted ? t('onboarding.permissions.granted') : t('onboarding.permissions.denied') }}</span>
             </div>
           </div>
@@ -34,14 +34,14 @@
         <!-- Automation Permission -->
         <div class="permission-card" :class="{ 'granted': automationGranted, 'denied': !automationGranted }">
           <div class="permission-icon">
-            <BIconGearFill />
+            <SettingsIcon />
           </div>
           <div class="permission-info">
             <h3>{{ t('onboarding.permissions.automation.title') }}</h3>
             <p>{{ t('onboarding.permissions.automation.description') }}</p>
             <div class="permission-status">
-              <BIconCheckCircleFill v-if="automationGranted" class="status-icon granted" />
-              <BIconXCircleFill v-else class="status-icon denied" />
+              <CheckCircleIcon v-if="automationGranted" class="status-icon granted" />
+              <XCircleIcon v-else class="status-icon denied" />
               <span>{{ automationGranted ? t('onboarding.permissions.granted') : t('onboarding.permissions.denied') }}</span>
             </div>
           </div>
@@ -53,7 +53,7 @@
       </div>
 
       <div class="permissions-info">
-        <BIconInfoCircle class="info-icon"/>
+        <InfoIcon class="info-icon"/>
         <div class="info-text">{{ t('onboarding.permissions.info') }}</div>
       </div>
 
@@ -65,9 +65,10 @@
 
 <script setup lang="ts">
 
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { t } from '../services/i18n'
+import { CheckCircleIcon, CircleUserIcon, InfoIcon, SettingsIcon, XCircleIcon } from 'lucide-vue-next'
+import { computed, onUnmounted, ref } from 'vue'
 import Dialog from '../composables/dialog'
+import { t } from '../services/i18n'
 
 // Permission states
 const accessibilityGranted = ref(false)
@@ -242,7 +243,6 @@ defineExpose({
   padding: 0rem 1.5rem;
   background-color: var(--background-alt-color);
   border-radius: 12px;
-  border: 1px solid var(--border-color);
 }
 
 .info-icon {

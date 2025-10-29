@@ -221,12 +221,14 @@ test('Ignite Custom Engine Azure', async () => {
 
 test('Anthropic Computer Use', async () => {
   const anthropic = await llmManager.igniteEngine('anthropic')
+  // @ts-expect-error mock
   expect(anthropic['computerInfo']).not.toBeNull()
 })
 
 test('Reflects configuration changes', () => {
   defaults.engines.openai.apiKey = '345'
   store.loadSettings()
+  // @ts-expect-error mock
   expect(llmManager.config.engines.openai.apiKey).toBe('345')
 })
 
@@ -313,24 +315,24 @@ test('Load tools', async () => {
   const engine = await llmManager.igniteEngine('openai')
   expect(engine.plugins).toHaveLength(0)
 
-  await llmManager.loadTools(engine, plugins, null)
+  await llmManager.loadTools(engine, 'test-workspace', plugins, null)
   expect(engine.plugins).toHaveLength(3)
   expect((engine.plugins[2] as MultiToolPlugin).toolsEnabled).toBeNull()
 
-  await llmManager.loadTools(engine, plugins, [])
+  await llmManager.loadTools(engine,'test-workspace',  plugins, [])
   expect(engine.plugins).toHaveLength(0)
 
-  await llmManager.loadTools(engine, plugins, ['plugin1'])
+  await llmManager.loadTools(engine, 'test-workspace', plugins, ['plugin1'])
   expect(engine.plugins).toHaveLength(1)
 
-  await llmManager.loadTools(engine, plugins, ['plugin1', 'plugin2'])
+  await llmManager.loadTools(engine, 'test-workspace', plugins, ['plugin1', 'plugin2'])
   expect(engine.plugins).toHaveLength(2)
 
-  await llmManager.loadTools(engine, plugins, ['plugin1', 'plugin2', 'tool1'])
+  await llmManager.loadTools(engine, 'test-workspace', plugins, ['plugin1', 'plugin2', 'tool1'])
   expect(engine.plugins).toHaveLength(3)
   expect((engine.plugins[2] as MultiToolPlugin).toolsEnabled).toStrictEqual(['tool1'])
 
-  await llmManager.loadTools(engine, plugins, ['plugin1', 'plugin2', 'tool1', 'tool2'])
+  await llmManager.loadTools(engine, 'test-workspace', plugins, ['plugin1', 'plugin2', 'tool1', 'tool2'])
   expect(engine.plugins).toHaveLength(3)
   expect((engine.plugins[2] as MultiToolPlugin).toolsEnabled).toStrictEqual(['tool1', 'tool2'])
 

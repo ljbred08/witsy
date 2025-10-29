@@ -1,46 +1,47 @@
 
-import { Expert } from 'types'
-import { Configuration } from 'types/config'
 import { LlmEngine } from 'multi-llm-ts'
-import { expertI18n, getLlmLocale, setLlmLocale } from './i18n'
-import Generator, { GenerationResult, GenerationOpts, LlmChunkCallback, GenerationCallback } from './generator'
-import { availablePlugins } from '../plugins/plugins'
+import { Expert, MessageExecutionType } from 'types'
+import { Configuration } from 'types/config'
+import { markRaw } from 'vue'
+import LlmFactory, { ILlmManager } from '../llms/llm'
+import Attachment from '../models/attachment'
 import Chat from '../models/chat'
 import Message from '../models/message'
-import Attachment from '../models/attachment'
-import LlmFactory, { ILlmManager } from '../llms/llm'
-import LlmUtils from './llm_utils'
+import { availablePlugins } from '../plugins/plugins'
+import { DeepResearch } from './deepresearch'
+import DeepResearchAL from './deepresearch_al'
 import DeepResearchMultiAgent from './deepresearch_ma'
 import DeepResearchMultiStep from './deepresearch_ms'
-import { DeepResearch } from './deepresearch'
+import Generator, { GenerationCallback, GenerationOpts, GenerationResult, LlmChunkCallback } from './generator'
+import { fullExpertI18n, getLlmLocale, setLlmLocale } from './i18n'
+import LlmUtils from './llm_utils'
 
 export interface AssistantCompletionOpts extends GenerationOpts {
   engine?: string
-  deepResearch?: boolean
+  execType?: MessageExecutionType
   titling?: boolean
   instructions?: string|null
   attachments?: Attachment[]
   expert?: Expert
+  noMarkdown?: boolean
 }
 
-export default class extends Generator {
+export default class {
 
+  config: Configuration
+  workspaceId: string
   llmManager: ILlmManager
   deepResearch: DeepResearch
+  llm: LlmEngine|null
   chat: Chat
 
-  constructor(config: Configuration) {
-    super(config)
+  constructor(config: Configuration, workspaceId?: string) {
+    this.config = config
     this.llm = null
-    this.stream = null
     this.deepResearch = null
+    this.workspaceId = workspaceId || config.workspaceId
     this.llmManager = LlmFactory.manager(config)
     this.chat = new Chat()
-  }
-
-  async stop() {
-    this.deepResearch?.stop()
-    super.stop()
   }
 
   setChat(chat: Chat) {
@@ -69,7 +70,8 @@ export default class extends Generator {
   }
 
   setLlm(llm: LlmEngine) {
-    this.llm = llm
+    // do not create a reactive llm
+    this.llm = markRaw(llm)
   }
 
   hasLlm() {
@@ -118,7 +120,8 @@ export default class extends Generator {
     }
 
     // update system message with latest instructions
-    this.chat.messages[0].content = this.getSystemInstructions(this.chat.instructions)
+    const llmUtils = new LlmUtils(this.config)
+    this.chat.messages[0].content = llmUtils.getSystemInstructions(this.chat.instructions, { noMarkdown: opts.noMarkdown })
 
     // make sure we have the right engine and model
     // special case: chat was started without an apiKey
@@ -142,7 +145,7 @@ export default class extends Generator {
 
     // make sure llm has latest tools
     if (!this.llmManager.isComputerUseModel(opts.engine, opts.model)) {
-      await this.llmManager.loadTools(this.llm, availablePlugins, this.chat.tools)
+      await this.llmManager.loadTools(this.llm, this.workspaceId, availablePlugins, this.chat.tools)
     } else {
       this.llm.clearPlugins()
     }
@@ -150,23 +153,27 @@ export default class extends Generator {
     // save this
     const hadPlugins = this.llm.plugins.length > 0
 
-    // deep research?
-    const deepReseach = opts?.deepResearch
-
     // add user message
     const userMessage = new Message('user', prompt)
-    userMessage.setExpert(opts.expert, expertI18n(opts.expert, 'prompt'))
+    userMessage.setExpert(fullExpertI18n(opts.expert))
     userMessage.engine = opts.engine
     userMessage.model = opts.model
-    userMessage.deepResearch = deepReseach
+    userMessage.execType = opts?.execType || 'prompt'
     opts.attachments.map(a => userMessage.attach(a))
     this.chat.addMessage(userMessage)
+
+    // // track expert usage
+    // if (opts.expert) {
+    //   const { trackExpertUsage } = await import('./experts')
+    //   const { store } = await import('./store')
+    //   trackExpertUsage(opts.expert.id, store.experts, store.config.workspaceId)
+    // }
 
     // add assistant message
     const assistantMessage = new Message('assistant')
     assistantMessage.engine = opts.engine
     assistantMessage.model = opts.model
-    assistantMessage.deepResearch = deepReseach
+    assistantMessage.execType = opts?.execType || 'prompt'
     this.chat.addMessage(assistantMessage)
     llmCallback?.call(null, null)
 
@@ -175,13 +182,19 @@ export default class extends Generator {
 
     // deep research will come with its own instructions
     let rc: GenerationResult = 'error'
-    if (deepReseach) {
+    if (userMessage.execType === 'deepresearch') {
       // const dpOpts = useDeepResearchMultiAgent(this.config, this.llm, this.chat, opts)
       // this.chat.messages[0].content = this.getSystemInstructions(this.chat.messages[0].content)
       // opts = { ...opts, ...dpOpts }
 
-      const useMultiAgent = this.config.deepresearch.runtime === 'ma'
-      this.deepResearch = useMultiAgent ? new DeepResearchMultiAgent(this.config) : new DeepResearchMultiStep(this.config)
+      const runtime = this.config.deepresearch.runtime
+      if (runtime === 'ma') {
+        this.deepResearch = new DeepResearchMultiAgent(this.config, this.workspaceId)
+      } else if (runtime === 'al') {
+        this.deepResearch = new DeepResearchAL(this.config, this.workspaceId)
+      } else {
+        this.deepResearch = new DeepResearchMultiStep(this.config, this.workspaceId)
+      }
       rc = await this.deepResearch.run(this.llm, this.chat, {
         ...opts,
         breadth: this.config.deepresearch.breadth,
@@ -232,7 +245,8 @@ export default class extends Generator {
   }
 
   async _prompt(opts: AssistantCompletionOpts, llmCallback: LlmChunkCallback): Promise<GenerationResult> {
-    return await this.generate(this.llm, this.chat.messages, {
+    const generator = new Generator(this.config)
+    return await generator.generate(this.llm, this.chat.messages, {
       ...opts,
       ...this.chat.modelOpts,
     }, llmCallback)

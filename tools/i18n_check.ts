@@ -21,16 +21,17 @@ const DEFAULT_MODEL = 'gpt-4.1-mini'
 
 // Keys that should be excluded from unused key detection (programmatically referenced)
 const EXCLUDE_FROM_UNUSED_PATTERNS = [
-  /^settings\.plugins\.[^.]+\.title$/,
-  /^common\.language\.[a-z]{2}-[A-Z]{2}$/,
-  /^chat\.role\..*$/,
-  /^computerUse\.action\..*$/,
-  /^commands\.commands\..*$/,
-  /^experts\.experts\..*$/,
-  /^tray\.notification\..*$/,
   /^agent\.forge\.list\..*$/,
   /^agent\.status\..*$/,
-  /^agent\.trigger\..*$/
+  /^agent\.trigger\..*$/,
+  /^chat\.role\..*$/,
+  /^commands\.commands\..*$/,
+  /^common\.language\.[a-z]{2}-[A-Z]{2}$/,
+  /^computerUse\.action\..*$/,
+  /^experts\.categories\..*$/,
+  /^experts\.experts\..*$/,
+  /^settings\.plugins\.[^.]+\.title$/,
+  /^tray\.notification\..*$/,
 ]
 
 // Key prefixes to exclude from processing (extraction and en.json addition)
@@ -40,7 +41,7 @@ const EXCLUDE_KEY_PREFIXES = [
 ]
 
 // Pattern to detect linked translations
-const LINKED_TRANSLATION_MARKER = '@:{'
+const LINKED_TRANSLATION_REGEX = /^@:\{'.*'\}$/
 
 // Parse command line arguments
 const args = process.argv.slice(2)
@@ -255,7 +256,26 @@ async function getCandidatesForDeletion(): Promise<Set<string>> {
       .filter(file => file.endsWith('.json'))
       .map(file => path.join(LOCALES_DIR, file))
 
-    // Load and process each locale file
+    // First pass: collect all linked references from en.json only
+    const referencedKeys = new Set<string>()
+    const localeData = JSON.parse(fs.readFileSync(path.join(LOCALES_DIR, 'en.json'), 'utf8'))
+    const flattenData = flatten(localeData)
+    const allKeys = Object.keys(flattenData)
+
+    // Find all linked translations in en.json
+    for (const key of allKeys) {
+      const value = flattenData[key]
+      if (typeof value === 'string') {
+        const regex = /@:\{'([^}]+)'\}/g
+        let match
+        while ((match = regex.exec(value)) !== null) {
+          const referencedKey = match[1]
+          referencedKeys.add(referencedKey)
+        }
+      }
+    }
+
+    // Second pass: process each locale file with knowledge of globally referenced keys
     for (const file of localeFiles) {
       
       const localeData = JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -268,16 +288,10 @@ async function getCandidatesForDeletion(): Promise<Set<string>> {
         !EXCLUDE_FROM_UNUSED_PATTERNS.some(pattern => pattern.test(key))
       ))
 
-      // also the translation file itself can reference other keys using "@:{'id'}" syntax
-      for (const key of allKeys) {
-        const value = flattenData[key]
-        const regex = /@:\{'([^}]+)'\}/g
-        let match
-        while ((match = regex.exec(value)) !== null) {
-          const referencedKey = match[1]
-          if (allKeys.includes(referencedKey)) {
-            unusedKeys.delete(referencedKey)
-          }
+      // Remove keys that are globally referenced via linked translations from any locale file
+      for (const referencedKey of referencedKeys) {
+        if (allKeys.includes(referencedKey)) {
+          unusedKeys.delete(referencedKey)
         }
       }
 
@@ -385,25 +399,25 @@ function categorizeKeys(
   keysWithChangedEnglish: string[]
 } {
   const allKeys = Array.from(keyUsages.keys())
-  
+
   // Filter out unused keys (candidates for deletion)
   const candidateKeys = allKeys.filter(key => !unusedKeys.has(key))
-  
-  // Filter out linked translations (equal to "@:{'something'}")
-  const finalCandidateKeys = candidateKeys.filter(key => {
+
+  // Separate regular translations (for change detection)
+  const regularTranslations = candidateKeys.filter(key => {
     const enValue = enData[key]
-    return enValue && !enValue.startsWith(LINKED_TRANSLATION_MARKER)
+    return enValue && !LINKED_TRANSLATION_REGEX.test(enValue)
   })
-  
+
   // Identify keys that need English translations (missing or empty English values)
   const keysNeedingEnglish = candidateKeys.filter(key => {
     const enValue = enData[key]
     return !enValue || enValue.trim() === ''
   })
-  
-  // Load English snapshot and compare for changes
+
+  // Load English snapshot and compare for changes (only for regular translations, not linked)
   const enSnapshot = loadEnglishSnapshot()
-  const keysWithChangedEnglish = finalCandidateKeys.filter(key => {
+  const keysWithChangedEnglish = regularTranslations.filter(key => {
     const currentValue = enData[key]
     const snapshotValue = enSnapshot[key]
     // Key has changed if snapshot exists and values differ
@@ -411,7 +425,7 @@ function categorizeKeys(
   })
 
   return {
-    candidateKeys: finalCandidateKeys,
+    candidateKeys, // Now includes both linked and regular translations
     keysNeedingEnglish,
     keysWithChangedEnglish
   }
@@ -553,10 +567,19 @@ async function translateCandidatesForTranslation(
           //setNestedValue(locales[locale], key, key);
           console.log(`  ‼️ Skipping missing EN "${key}"`);
         }
-        // For other languages, prepare for translation
+        // For other languages, check if English value exists
         else if (keyExists(locales.en, key)) {
           const enValue = getNestedValue(locales.en, key);
-          localeTranslationBatches[locale].push({ key, en: enValue });
+
+          // If it's a linked translation, copy it directly (don't translate)
+          if (LINKED_TRANSLATION_REGEX.test(enValue)) {
+            setNestedValue(locales[locale], key, enValue);
+            console.log(`  + Copied linked translation "${key}" = "${enValue}"`);
+          }
+          // Otherwise, prepare for translation
+          else {
+            localeTranslationBatches[locale].push({ key, en: enValue });
+          }
         }
         else {
           // If no English value, use the key itself
@@ -766,7 +789,7 @@ function getWrongLinkedTranslations(locales: { [locale: string]: LocaleData }): 
   // get linked translations
   const linkedKeys: string[] = []
   Object.keys(enData).forEach(key => {
-    if (enData[key].includes(LINKED_TRANSLATION_MARKER)) {
+    if (LINKED_TRANSLATION_REGEX.test(enData[key])) {
       linkedKeys.push(key)
     }
   })

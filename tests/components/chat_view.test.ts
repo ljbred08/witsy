@@ -2,7 +2,7 @@
 import { vi, beforeAll, beforeEach, expect, test, afterEach } from 'vitest'
 import { VueWrapper, enableAutoUnmount, mount, flushPromises } from '@vue/test-utils'
 import { useWindowMock, useBrowserMock } from '../mocks/window'
-import { createDialogMock, createI18nMock } from '../mocks/index'
+import { createI18nMock } from '../mocks/index'
 import { setLlmDefaults } from '../mocks/llm'
 import { store } from '../../src/services/store'
 import Chat from '../../src/models/chat'
@@ -14,6 +14,7 @@ import ChatArea from '../../src/components/ChatArea.vue'
 import Assistant from '../../src/services/assistant'
 import Dialog from '../../src/composables/dialog'
 
+vi.unmock('../../src/composables/event_bus')
 import useEventBus  from '../../src/composables/event_bus'
 const { emitEvent } = useEventBus()
 
@@ -21,14 +22,6 @@ enableAutoUnmount(afterEach)
 
 vi.mock('../../src/services/i18n', async () => {
   return createI18nMock()
-})
-
-vi.mock('../../src/composables/dialog', async () => {
-  return createDialogMock(
-    (args) => ({
-      value: args.input === 'select' ? 'folder1' : 'user-input'
-    })
-  )
 })
 
 vi.mock('../../src/services/assistant', async () => {
@@ -44,7 +37,6 @@ vi.mock('../../src/services/assistant', async () => {
   Assistant.prototype.initLlm = vi.fn()
   Assistant.prototype.hasLlm = vi.fn(() => true)
   Assistant.prototype.prompt = vi.fn()
-  Assistant.prototype.stop = vi.fn()
   return { default: Assistant }
 })
 
@@ -176,51 +168,79 @@ test('Sends prompt', async () => {
   const wrapper: VueWrapper<any> = mount(ChatView)
   await wrapper.vm.chatArea.$emit('prompt', { prompt: 'prompt' })
   expect(Assistant.prototype.initLlm).toHaveBeenCalled()
-  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', {
-    model: 'gpt-4.1', instructions: null, attachments: [], docrepo: null, expert: null, deepResearch: false,
-  }, expect.any(Function), expect.any(Function))
+  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', expect.objectContaining({
+    model: 'gpt-4.1', instructions: null, attachments: [], docrepo: null, expert: null, execType: 'prompt',
+    abortSignal: expect.any(AbortSignal),
+  }), expect.any(Function), expect.any(Function))
 })
 
 test('Sends prompt with instructions', async () => {
   const wrapper: VueWrapper<any> = mount(ChatView)
   await wrapper.vm.chatArea.$emit('prompt', { prompt: 'prompt', instructions: 'instructions' })
   expect(Assistant.prototype.initLlm).toHaveBeenCalled()
-  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', {
-    model: 'gpt-4.1', instructions: 'instructions', attachments: [], docrepo: null, expert: null, deepResearch: false,
-  }, expect.any(Function), expect.any(Function))
+  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', expect.objectContaining({
+    model: 'gpt-4.1', instructions: 'instructions', attachments: [], docrepo: null, expert: null, execType: 'prompt',
+    abortSignal: expect.any(AbortSignal),
+  }), expect.any(Function), expect.any(Function))
 })
 
 test('Sends prompt with attachment', async () => {
   const wrapper: VueWrapper<any> = mount(ChatView)
   await wrapper.vm.chatArea.$emit('prompt', { prompt: 'prompt', attachments: ['file'] })
   expect(Assistant.prototype.initLlm).toHaveBeenCalled()
-  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', {
-    model: 'gpt-4.1', instructions: null, attachments: ['file'], docrepo: null, expert: null, deepResearch: false,
-  }, expect.any(Function), expect.any(Function))
+  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', expect.objectContaining({
+    model: 'gpt-4.1', instructions: null, attachments: ['file'], docrepo: null, expert: null, execType: 'prompt',
+    abortSignal: expect.any(AbortSignal),
+  }), expect.any(Function), expect.any(Function))
 })
 
 test('Sends prompt with doc repo', async () => {
   const wrapper: VueWrapper<any> = mount(ChatView)
   await wrapper.vm.chatArea.$emit('prompt', { prompt: 'prompt', docrepo: 'docrepo' })
   expect(Assistant.prototype.initLlm).toHaveBeenCalled()
-  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', {
-    model: 'gpt-4.1', instructions: null, attachments: [], docrepo: 'docrepo', expert: null, deepResearch: false,
-  }, expect.any(Function), expect.any(Function))
+  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', expect.objectContaining({
+    model: 'gpt-4.1', instructions: null, attachments: [], docrepo: 'docrepo', expert: null, execType: 'prompt',
+    abortSignal: expect.any(AbortSignal),
+  }), expect.any(Function), expect.any(Function))
 })
 
 test('Sends prompt with expert', async () => {
   const wrapper: VueWrapper<any> = mount(ChatView)
   await wrapper.vm.chatArea.$emit('prompt', { prompt: 'prompt', expert: { id: 'expert', prompt: 'system' } })
   expect(Assistant.prototype.initLlm).toHaveBeenCalled()
-  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', {
-    model: 'gpt-4.1', instructions: null, attachments: [], docrepo: null, expert: { id: 'expert', prompt: 'system' }, deepResearch: false,
-  }, expect.any(Function), expect.any(Function))
+  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', expect.objectContaining({
+    model: 'gpt-4.1', instructions: null, attachments: [], docrepo: null, expert: { id: 'expert', prompt: 'system' }, execType: 'prompt',
+    abortSignal: expect.any(AbortSignal),
+  }), expect.any(Function), expect.any(Function))
 })
 
-test('Stop assistant', async () => {
+test('Sends prompt with deepResearch', async () => {
   const wrapper: VueWrapper<any> = mount(ChatView)
+  await wrapper.vm.chatArea.$emit('prompt', { prompt: 'prompt', execType: 'deepresearch' })
+  expect(Assistant.prototype.initLlm).toHaveBeenCalled()
+  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', expect.objectContaining({
+    model: 'gpt-4.1', instructions: null, attachments: [], docrepo: null, expert: null, execType: 'deepresearch',
+    abortSignal: expect.any(AbortSignal),
+  }), expect.any(Function), expect.any(Function))
+})
+
+test('Stop generation aborts controller', async () => {
+  const wrapper: VueWrapper<any> = mount(ChatView)
+
+  // Start a prompt to create the abortController
+  await wrapper.vm.chatArea.$emit('prompt', { prompt: 'prompt' })
+
+  // Verify abortController was created and used
+  expect(Assistant.prototype.prompt).toHaveBeenCalled()
+  const callArgs = vi.mocked(Assistant.prototype.prompt).mock.calls[0]
+  const opts = callArgs[1]
+  expect(opts.abortSignal).toBeInstanceOf(AbortSignal)
+
+  // Now stop should abort the signal
   await wrapper.vm.chatArea.$emit('stop-generation', null)
-  expect(Assistant.prototype.stop).toHaveBeenCalled()
+
+  // After stop, the signal should be aborted
+  expect(opts.abortSignal?.aborted).toBe(true)
 })
 
 test('New chat in folder without defaults', async () => {
@@ -263,6 +283,7 @@ test('New chat in folder with defaults', async () => {
 
 test('Rename chat', async () => {
   mount(ChatView)
+  vi.mocked(Dialog.show).mockResolvedValueOnce({ value: 'user-input' })
   emitEvent('rename-chat', store.history.chats[0])
   expect(Dialog.show).toHaveBeenLastCalledWith(expect.objectContaining({
     title: 'main.chat.rename',
@@ -277,6 +298,7 @@ test('Rename chat', async () => {
 test('Move chat', async () => {
   expect(store.history.folders[0].chats).not.toHaveLength(1)
   mount(ChatView)
+  vi.mocked(Dialog.show).mockResolvedValueOnce({ value: 'folder1' })
   emitEvent('move-chat', 'chat')
   expect(Dialog.show).toHaveBeenLastCalledWith(expect.objectContaining({
     title: 'main.chat.moveToFolder',
@@ -306,6 +328,7 @@ test('Delete chat', async () => {
 
 test('Rename folder', async () => {
   mount(ChatView)
+  vi.mocked(Dialog.show).mockResolvedValueOnce({ value: 'user-input' })
   emitEvent('rename-folder', 'folder1')
   expect(Dialog.show).toHaveBeenLastCalledWith(expect.objectContaining({
     title: 'main.folder.rename',
@@ -338,9 +361,10 @@ test('Select chat', async () => {
   await wrapper.vm.chatArea.$emit('prompt', { prompt: 'prompt' })
   expect(Assistant.prototype.initLlm).toHaveBeenCalled()
   expect(wrapper.vm.assistant.chat.engine).toBe('openai')
-  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', {
-    model: 'gpt-4.1', attachments: [], docrepo: null, expert: null, deepResearch: false,
-  }, expect.any(Function), expect.any(Function))
+  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt', expect.objectContaining({
+    model: 'gpt-4.1', attachments: [], docrepo: null, expert: null, execType: 'prompt',
+    abortSignal: expect.any(AbortSignal),
+  }), expect.any(Function), expect.any(Function))
 })
 
 test('Fork Chat on Assistant Message', async () => {
@@ -368,15 +392,16 @@ test('Fork Chat on User Message', async () => {
   expect(store.history.chats[1].model).toBe('model2')
   expect(store.history.chats[1].messages).toHaveLength(3)
   expect(Assistant.prototype.initLlm).toHaveBeenCalled()
-  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt2', {
+  expect(Assistant.prototype.prompt).toHaveBeenLastCalledWith('prompt2', expect.objectContaining({
     model: 'model2',
     attachments: [ expect.objectContaining({
       content: 'attachment',
     }) ],
     docrepo: 'docrepo',
     expert: expect.objectContaining({ id: 'expert'}),
-    deepResearch: false,
-  }, expect.any(Function), expect.any(Function))
+    execType: 'prompt',
+    abortSignal: expect.any(AbortSignal),
+  }), expect.any(Function), expect.any(Function))
 })
 
 test('Delete Message', async () => {

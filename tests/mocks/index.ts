@@ -3,47 +3,6 @@
 import { vi } from 'vitest'
 import { store } from '../../src/services/store'
 
-export const onEventMock = vi.fn()
-export const emitEventMock = vi.fn()
-
-export const createEventBusMock = (emitMock?: (event: string, ...args: any[]) => void) => {
-  if (emitMock) {
-    emitEventMock.mockImplementation(emitMock)
-  }
-  return { default: () => ({
-    onEvent: onEventMock,
-    emitEvent: emitEventMock
-  })}
-} 
-
-export const createDialogMock = (callback?: (args) => Partial<{
-  isConfirmed: boolean
-  isDenied: boolean
-  isDismissed: boolean
-  value?: any
-}>) => {
-
-  const defaultResponse = {
-    isConfirmed: true,
-    isDenied: false,
-    isDismissed: false,
-  }
-
-  return {
-    default: {
-      alert: vi.fn((args) => Promise.resolve({
-        ...defaultResponse,
-        ...callback?.(args)
-      })),
-      show: vi.fn((args) => Promise.resolve({
-      ...defaultResponse,
-      ...callback?.(args)
-    })),
-    }
-  }
-
-}
-
 export const createI18nMock = (callback?: () => Partial<{
   locale: string
 }>) => {
@@ -57,7 +16,7 @@ export const createI18nMock = (callback?: () => Partial<{
       ? store.config?.general?.locale
         ? `${key}_${store.config.general.locale}`
         : key
-      : `${key}_${store.config.general.locale||'default'}_${Object.entries(values)
+      : `${key}_${store.config?.general?.locale||'default'}_${Object.entries(values)
           .map(([k, v]) => `${k}=${JSON.stringify(v).replace(/^"/g, '').replace(/"$/g, '')}`)
           .join('&')
         }`,
@@ -75,11 +34,22 @@ export const createI18nMock = (callback?: () => Partial<{
     getLlmLocale: vi.fn(() => locale),
     setLlmLocale: vi.fn(l => locale = l),
 
-    expertI18n: vi.fn((expert, attr) => `expert_${expert?.id}_${attr}`),
+    expertI18n: vi.fn((expert, attr) => expert?.[attr] ?? `expert_${expert?.id}_${attr}`),
     expertI18nDefault: vi.fn((expert, attr) => `expert_default_${expert?.id}_${attr}`),
 
-    commandI18n: vi.fn((command, attr) => `command_${command?.id}_${attr}_{input}`),
+    commandI18n: vi.fn((command, attr) => command?.[attr] ?? `command_${command?.id}_${attr}_{input}`),
     commandI18nDefault: vi.fn((command, attr) => `command_default_${command?.id}_${attr}${attr == 'template' ? "-{input}" : ""}`),
+
+    categoryI18n: vi.fn((category, attr) => category?.[attr] ?? `category_${category?.id}_${attr}`),
+    categoryI18nDefault: vi.fn((category, attr) => `category_default_${category?.id}_${attr}`),
+
+    fullExpertI18n: function(expert) {
+      return expert ? {
+        ...expert,
+        name: this.expertI18n(expert, 'name'),
+        prompt: this.expertI18n(expert, 'prompt')
+      } : undefined
+    },
 
     i18nInstructions: (config: any, key: string) => {
 
@@ -105,20 +75,5 @@ export const createI18nMock = (callback?: () => Partial<{
     }
   
   }
-
-}
-
-export const createAutomatorMock = (callback?: () => Partial<{
-  selectedText: string|null
-}>) => {
-
-  const selectedText = 'Grabbed text'
-
-  const Automator = vi.fn()
-  Automator.prototype.getForemostApp = vi.fn(() => ({ id: 'appId', name: 'appName', path: 'appPath', window: 'title' }))
-  Automator.prototype.moveCaretBelow = vi.fn()
-  Automator.prototype.getSelectedText = vi.fn((): string|null => { return callback ? callback().selectedText ?? null : selectedText })
-  Automator.prototype.pasteText = vi.fn()
-  return { default: Automator }
 
 }

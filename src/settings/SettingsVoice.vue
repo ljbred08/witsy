@@ -1,9 +1,9 @@
 <template>
-  <div class="form tab-content form-vertical form-large">
+  <div class="tab-content">
     <header>
       <div class="title">{{ t('settings.tabs.voice') }}</div>
     </header>
-    <main>
+    <main class="form form-vertical form-large">
       <div class="master-detail">
         <div class="md-master">
           <div class="md-master-list">
@@ -23,7 +23,7 @@
 
 import { ref, computed, nextTick } from 'vue'
 import { t } from '../services/i18n'
-import { BIconMicFill, BIconVolumeUpFill } from 'bootstrap-icons-vue'
+import { MicIcon, Volume2Icon } from 'lucide-vue-next'
 import SettingsTTS from './SettingsTTS.vue'
 import SettingsSTT from './SettingsSTT.vue'
 
@@ -32,8 +32,8 @@ const settings = ref(null)
 
 const available = computed(() => {
   return [
-    { id: 'stt', label: t('settings.voice.tabs.speechToText'), icon: BIconMicFill },
-    { id: 'tts', label: t('settings.voice.tabs.textToSpeech'), icon: BIconVolumeUpFill },
+    { id: 'stt', label: t('settings.voice.tabs.speechToText'), icon: MicIcon },
+    { id: 'tts', label: t('settings.voice.tabs.textToSpeech'), icon: Volume2Icon },
   ]
 })
 

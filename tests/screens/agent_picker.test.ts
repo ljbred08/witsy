@@ -1,7 +1,7 @@
 import { vi, beforeAll, afterEach, expect, test, describe } from 'vitest'
 import { mount, enableAutoUnmount, VueWrapper } from '@vue/test-utils'
 import { useWindowMock } from '../mocks/window'
-import { createI18nMock, createDialogMock } from '../mocks'
+import { createI18nMock } from '../mocks'
 import { stubTeleport } from '../mocks/stubs'
 import { store } from '../../src/services/store'
 import Agent from '../../src/models/agent'
@@ -12,16 +12,6 @@ enableAutoUnmount(afterEach)
 vi.mock('../../src/services/i18n', async () => {
   return createI18nMock()
 })
-
-vi.mock('../../src/composables/dialog', async () => {
-  return createDialogMock()
-})
-
-vi.mock('../../src/composables/event_bus', () => ({
-  default: () => ({
-    emitEvent: vi.fn()
-  })
-}))
 
 beforeAll(() => {
   useWindowMock()
@@ -121,7 +111,7 @@ describe('AgentPicker', () => {
     
     const cancelButton = wrapper.find('button[name="cancel"]')
     expect(cancelButton.exists()).toBe(true)
-    expect(cancelButton.classes()).toContain('alert-neutral')
+    expect(cancelButton.classes()).toContain('tertiary')
   })
 
   test('Filters only runnable agents', async () => {

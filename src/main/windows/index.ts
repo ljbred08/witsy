@@ -44,7 +44,7 @@ export const titleBarOptions = (opts?: any): BrowserWindowConstructorOptions => 
 
   opts = {
     titleBarStyle: 'hidden',
-    lightThemeColor: '#efefef',
+    lightThemeColor: '#ffffff',
     darkBlackThemeColor: '#404040',
     darkBlueThemeColor: 'rgb(40, 50, 65)',
     height: undefined,
@@ -59,7 +59,7 @@ export const titleBarOptions = (opts?: any): BrowserWindowConstructorOptions => 
       // windows
       symbolColor: nativeTheme.shouldUseDarkColors ? '#fff' : '#000',
       // windows
-      height: process.platform === 'win32' ? opts.height : undefined,
+      height: process.platform === 'win32' ? opts.height - 1 : undefined,
     },
     trafficLightPosition: { x: 12, y: 16 },
   }
@@ -132,6 +132,7 @@ export const createWindow = (opts: CreateWindowOpts = {}) => {
       defaultEncoding: 'UTF-8',
       devTools: process.env.DEBUG ? true : false,
       sandbox: true,
+      webviewTag: true,
     },
   });
 
@@ -208,7 +209,7 @@ export const createWindow = (opts: CreateWindowOpts = {}) => {
 
     // load url
     const url = `${MAIN_WINDOW_VITE_DEV_SERVER_URL}${queryParams}#${opts.hash||''}`;
-    console.log(url);
+    console.log(`[window] Loading URL: ${url}`);
     window.loadURL(url);
   
   } else {
@@ -222,8 +223,8 @@ export const createWindow = (opts: CreateWindowOpts = {}) => {
     }
 
     // load file
-    console.log('Loading file:', path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
-    console.log('With options:', opts.hash||'', queryParams);
+    console.log('[window] Loading file:', path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
+    console.log('[window] With options:', opts.hash||'', queryParams);
     window.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`), { hash: opts.hash||'', query: queryParams });
   
   }
@@ -288,11 +289,11 @@ export const releaseFocus = async (opts?: ReleaseFocusOpts) => {
     if (opts?.sourceApp) {
 
       try {
-        console.log(`Releasing focus to ${opts.sourceApp.id} / ${opts.sourceApp.window}`);
+        console.log(`[window] Releasing focus to ${opts.sourceApp.id} / ${opts.sourceApp.window}`);
         const macosAutomator = new MacosAutomator();
         focused = await macosAutomator.focusApp(opts.sourceApp);
       } catch (error) {
-        console.error('Error while focusing app', error);
+        console.error('[window] Error while focusing app', error);
       }
 
     }
@@ -309,12 +310,12 @@ export const releaseFocus = async (opts?: ReleaseFocusOpts) => {
     if (opts?.sourceApp?.window) {
 
       try {
-        console.log(`Releasing focus to ${opts.sourceApp.window}`);
+        console.log(`[window] Releasing focus to ${opts.sourceApp.window}`);
         const windowsAutomator = new WindowsAutomator();
         await windowsAutomator.activateApp(opts.sourceApp.window);
         focused = true;
       } catch (error) {
-        console.error('Error while focusing app', error);
+        console.error('[window] Error while focusing app', error);
       }
 
     }
@@ -364,11 +365,11 @@ export const notifyBrowserWindows = (event: string, ...args: any[]) => {
           window.webContents.send(event, ...args);
         }
       } catch (error) {
-        console.error('Error while notifying browser windows', error)
+        console.error('[window] Error while notifying browser windows', error)
       }
     }
   } catch (error) {
-    console.error('Error while notifying browser windows', error)
+    console.error('[window] Error while notifying browser windows', error)
   }
 }
 
@@ -379,7 +380,7 @@ export const notifyFocusedWindow = (event: string, ...args: any[]) => {
       focusedWindow.webContents.send(event, ...args);
     }
   } catch (error) {
-    console.error('Error while notifying focused window', error)
+    console.error('[window] Error while notifying focused window', error)
   }
 }
 
@@ -423,14 +424,14 @@ export const enableClickThrough = (window: BrowserWindow) => {
     })
 
     // set ignore mouse events by alpha.
-    const buffer = image.getBitmap()
+    const buffer = image.toBitmap() as any
     window.setIgnoreMouseEvents(buffer[3] < 255)
-    //console.log(`${window.getTitle()} setIgnoreMouseEvents`, buffer[3] < 255)
+    //console.log(`[window] ${window.getTitle()} setIgnoreMouseEvents`, buffer[3] < 255)
   
   }, 300)
 
   const clear = () => {
-    //console.log(`Cancelling click through for ${window.getTitle()}`);
+    //console.log(`[window] Cancelling click through for ${window.getTitle()}`);
     clearInterval(id);
     window.off('hide', clear);
     window.off('close', clear);

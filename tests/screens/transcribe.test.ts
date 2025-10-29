@@ -2,7 +2,8 @@
 import { vi, beforeAll, beforeEach, expect, test, afterEach, Mock } from 'vitest'
 import { enableAutoUnmount, mount, VueWrapper } from '@vue/test-utils'
 import { useWindowMock, useBrowserMock } from '../mocks/window'
-import { createEventBusMock, createI18nMock, emitEventMock } from '../mocks'
+import { createI18nMock } from '../mocks'
+import { emitEventMock } from '../../vitest.setup'
 import { store } from '../../src/services/store'
 import Transcribe from '../../src/screens/Transcribe.vue'
 import Waveform from '../../src/components/Waveform.vue'
@@ -14,9 +15,6 @@ vi.mock('../../src/services/i18n', async () => {
   return createI18nMock()
 })
 
-vi.mock('../../src/composables/event_bus', async () => {
-  return createEventBusMock()
-})
 
 vi.mock('../../src/composables/transcriber', () => {
   return { default: vi.fn(() => ({
@@ -25,10 +23,45 @@ vi.mock('../../src/composables/transcriber', () => {
       isReady: vi.fn(() => true),
       transcribe: vi.fn(async (): Promise<TranscribeResponse> => Promise.resolve({ text: 'transcribed' })),
       endStreaming: vi.fn(),
+      streaming: false,
+      requiresStreaming: false,
+      requiresPcm16bits: false,
     },
     processStreamingError: vi.fn(),
   })) }
 })
+
+vi.mock('../../src/composables/dialog', () => ({
+  default: {
+    alert: vi.fn(() => Promise.resolve({ isConfirmed: true, isDenied: false, isDismissed: false })),
+    show: vi.fn(() => Promise.resolve({ isConfirmed: true, isDenied: false, isDismissed: false })),
+  }
+}))
+
+vi.mock('../../src/composables/audio_recorder', () => ({
+  default: vi.fn(() => ({
+    initialize: vi.fn(async () => Promise.resolve()),
+    start: vi.fn(() => {
+      // Simulate MediaRecorder start call
+      window.MediaRecorder.prototype.start()
+    }),
+    stop: vi.fn(() => {
+      // Simulate MediaRecorder stop call  
+      window.MediaRecorder.prototype.stop()
+    }),
+    release: vi.fn(),
+    getAnalyser: vi.fn(() => ({
+      fftSize: 2048,
+      frequencyBinCount: 1024,
+      getFloatFrequencyData: vi.fn(),
+      getByteFrequencyData: vi.fn(),
+      getFloatTimeDomainData: vi.fn(), 
+      getByteTimeDomainData: vi.fn(),
+    })),
+    getBufferLength: vi.fn(() => 1024),
+    getDataArray: vi.fn(() => new Uint8Array(1024)),
+  }))
+}))
 
 beforeAll(() => {
   useWindowMock()
@@ -131,10 +164,10 @@ test('Records with push to talk', async () => {
 
 test('Transcribes', async () => {
   const wrapper: VueWrapper<any> = mount(Transcribe)
-  await wrapper.vm.transcribe([])
+  await wrapper.vm.transcribe(new Blob())
   expect(wrapper.vm.transcription).toBe('transcribed')
   wrapper.vm.transcription += '.'
-  await wrapper.vm.transcribe([])
+  await wrapper.vm.transcribe(new Blob())
   expect(wrapper.vm.transcription).toBe('transcribed. transcribed')
 })
 

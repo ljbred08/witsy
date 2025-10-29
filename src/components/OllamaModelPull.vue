@@ -32,7 +32,7 @@ import Dialog from '../composables/dialog'
 import Combobox from './Combobox.vue'
 import ModelSelectPlus from './ModelSelectPlus.vue'
 import { ProgressResponse } from 'ollama'
-import type { A as AbortableAsyncIterator } from 'ollama/dist/shared/ollama.e009de91.cjs'
+import type { A as AbortableAsyncIterator } from 'ollama/dist/shared/ollama.27169772.cjs'
 
 type Model = {
   id: string,
@@ -120,7 +120,7 @@ const onStop = async () => {
   padding: 10px 4px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  font-size: 9.5pt;
+  font-size: 12.5px;
   color: var(--icon-color);
   white-space: nowrap;
 }

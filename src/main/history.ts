@@ -2,9 +2,11 @@
 import { History, Chat } from 'types/index'
 import { App } from 'electron'
 import { notifyBrowserWindows } from './windows'
+import { workspaceFolderPath } from './workspace'
 import Monitor from './monitor'
 import path from 'path'
 import fs from 'fs'
+import { LlmModelOpts } from 'multi-llm-ts'
 
 export const kUnusedDelay = 3600000
 
@@ -13,16 +15,20 @@ const monitor: Monitor = new Monitor(() => {
   notifyBrowserWindows('file-modified', 'history')
 })
 
-export const historyFilePath = (app: App): string => {
-  const userDataPath = app.getPath('userData')
-  const historyFilePath = path.join(userDataPath, 'history.json')
-  return historyFilePath
+export const historyFilePath = (app: App, workspaceId: string): string => {
+  const workspacePath = workspaceFolderPath(app, workspaceId)
+  return path.join(workspacePath, 'history.json')
 }
 
-export const loadHistory = async (app: App): Promise<History> => {
+export const attachmentsFilePath = (app: App, workspaceId: string): string => {
+  const workspacePath = workspaceFolderPath(app, workspaceId)
+  return path.join(workspacePath, 'images')
+}
+
+export const loadHistory = async (app: App, workspaceId: string): Promise<History> => {
 
   // needed
-  const filepath = historyFilePath(app) 
+  const filepath = historyFilePath(app, workspaceId) 
 
   // check existence
   if (!fs.existsSync(filepath)) {
@@ -33,24 +39,51 @@ export const loadHistory = async (app: App): Promise<History> => {
   try {
     
     // load it
-    let history = JSON.parse(fs.readFileSync(filepath, 'utf-8'))
+    let history: History = JSON.parse(fs.readFileSync(filepath, 'utf-8'))
 
     // backwards compatibility
     if (Array.isArray(history)) {
       console.log('Upgrading history data')
-      history = { folders: [], chats: history }
+      history = { folders: [], chats: history, quickPrompts: []}
     }
 
     // backwards compatibility for folder defaults
     for (const folder of history.folders) {
+      // @ts-expect-error backwards compatibility
       if (folder.defaults?.prompt) {
+      // @ts-expect-error backwards compatibility
         folder.defaults.instructions = folder.defaults.prompt
+      // @ts-expect-error backwards compatibility
         delete folder.defaults.prompt
       }
     }
 
+    // backwards compatibility for model opts
+    for (const folder of history.folders) {
+      const modelOpts: LlmModelOpts = {}
+      for (const attr of [
+        /* LlmModelOpts */          'contextWindowSize', 'maxTokens', 'temperature', 'top_k', 'top_p',
+        /* LlmOpenAIModelOpts */    'reasoningEffort', 'verbosity',
+        /* LlmAnthropicModelOpts */ 'reasoning', 'reasoningBudget',
+        /* LlmGoogleModelOpts */    'thinkingBudget',
+                                    'customOpts'
+      ]) {
+        // @ts-expect-error backwards compatibility
+        if (folder.defaults && typeof folder.defaults[attr] !== 'undefined') {
+          // @ts-expect-error backwards compatibility
+          modelOpts[attr] = folder.defaults[attr]
+          // @ts-expect-error backwards compatibility
+          delete folder.defaults[attr]
+        }
+      }
+      if (Object.keys(modelOpts).length > 0) {
+        folder.defaults.modelOpts = modelOpts
+      }
+    }
+
+
     // clean-up in case deletions were missed
-    cleanAttachmentsFolder(app, history)
+    cleanAttachmentsFolder(app, workspaceId, history)
     
     // start monitors
     monitor.start(filepath)
@@ -67,11 +100,11 @@ export const loadHistory = async (app: App): Promise<History> => {
 
 }
 
-export const saveHistory = (app: App, history: History) => {
+export const saveHistory = (app: App, workspaceId: string, history: History) => {
   try {
 
     // local
-    const filepath = historyFilePath(app) 
+    const filepath = historyFilePath(app, workspaceId) 
     fs.writeFileSync(filepath, JSON.stringify(history, null, 2))
 
   } catch (error) {
@@ -79,9 +112,9 @@ export const saveHistory = (app: App, history: History) => {
   }
 }
 
-const cleanAttachmentsFolder = (app: App, history: History) => {
+const cleanAttachmentsFolder = (app: App, workspaceId: string, history: History) => {
 
-  const unusedAttachments = listUnusedAttachments(app, history.chats)
+  const unusedAttachments = listUnusedAttachments(app, workspaceId, history.chats)
   for (const attachment of unusedAttachments) {
     try {
       console.log(`Deleting unused file: ${attachment}`)
@@ -92,11 +125,10 @@ const cleanAttachmentsFolder = (app: App, history: History) => {
   }
 }
 
-export const listUnusedAttachments = (app: App, chats: Chat[]): string[] => {
+export const listUnusedAttachments = (app: App, workspaceId: string, chats: Chat[]): string[] => {
 
-  // get the user data path
-  const userDataPath = app.getPath('userData')
-  const imagesPath = path.join(userDataPath, 'images')
+  // get the images path (workspace-relative)
+  const imagesPath = path.join(workspaceFolderPath(app, workspaceId), 'images')
 
   // read all files in the images folder
   const files = listExistingAttachments(imagesPath)

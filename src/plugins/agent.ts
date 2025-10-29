@@ -1,12 +1,16 @@
 
-import { Agent, anyDict } from '../types/index'
-import { Configuration } from '../types/config'
 import { PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
-import Plugin from './plugin'
+import { AgentA2AExecutorOpts } from '../services/agent_executor_a2a'
+import { AgentWorkflowExecutorOpts } from '../services/agent_executor_workflow'
+import { createAgentExecutor } from '../services/agent_utils'
 import { t } from '../services/i18n'
 import { extractPromptInputs, replacePromptInputs } from '../services/prompt'
-import Runner, { RunnerCompletionOpts } from '../services/runner'
+import { Agent } from '../types/agents'
+import { Configuration } from '../types/config'
+import { anyDict } from '../types/index'
+import Plugin from './plugin'
 
+const kAgentPluginPrefix = 'agent_'
 const kStoreIdPrefix = 'storeId:'
 
 export interface AgentStorage {
@@ -14,7 +18,9 @@ export interface AgentStorage {
   retrieve: (key: string) => Promise<any>
 }
 
-export type AgentPluginOpts = RunnerCompletionOpts & {
+export type AgentPluginOpts = {
+  workflowOpts?: AgentWorkflowExecutorOpts
+  a2aOpts?: AgentA2AExecutorOpts
   storeData?: boolean
   retrieveData?: boolean
 }
@@ -29,22 +35,28 @@ export default class extends Plugin {
   storage?: AgentStorage
 
   constructor(
-    config: Configuration, agent: Agent,
-    engine: string, model: string, opts?: Omit<AgentPluginOpts, 'engine'|'model'>,
-    storage?: AgentStorage, 
+    config: Configuration, workspaceId: string, agent: Agent,
+    engine: string, model: string, opts?: AgentPluginOpts,
+    storage?: AgentStorage,
   ) {
-    super(config)
+    super(config, workspaceId)
     this.agent = agent
     this.engine = engine
     this.model = model
     this.storage = storage
     this.opts = {
-      ephemeral: opts?.ephemeral ?? false,
-      engine: this.engine,
-      model: this.model,
-      storeData: true,
-      retrieveData: true,
-      ...opts,
+      storeData: opts?.storeData ?? true,
+      retrieveData: opts?.retrieveData ?? true,
+      workflowOpts: {
+        ephemeral: false,
+        engine: this.engine,
+        model: this.model,
+        ...opts?.workflowOpts,
+      },
+      a2aOpts: {
+        ephemeral: false,
+        ...opts?.a2aOpts,
+      },
     }
   }
 
@@ -53,7 +65,7 @@ export default class extends Plugin {
   }
 
   getName(): string {
-    return `agent_${this.agent.name.replace(/ /g, '_').toLowerCase()}`
+    return `${kAgentPluginPrefix}${this.agent.name.replace(/ /g, '_').toLowerCase()}`
   }
 
   getDescription(): string {
@@ -156,9 +168,10 @@ export default class extends Plugin {
       const prompt = replacePromptInputs(this.agent.steps[0].prompt || '', parameters)
       //console.log(`Running agent ${this.agent.name} with prompt:`, prompt)
 
-      // now call the agent through the runner
-      const runner = new Runner(this.config, this.agent)
-      const run = await runner.run('workflow', prompt, this.opts)
+      // create executor and run with appropriate opts
+      const executor = createAgentExecutor(this.config, this.workspaceId, this.agent)
+      const executorOpts = this.agent.source === 'a2a' ? this.opts.a2aOpts : this.opts.workflowOpts
+      const run = await executor.run('workflow', prompt, executorOpts)
       
       if (run.status === 'success') {
 

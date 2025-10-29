@@ -57,7 +57,7 @@
         <!-- Installed models -->
         <div class="models-section">
           <h4 class="section-title">
-            <BIconCpu class="section-icon" />
+            <CpuIcon class="section-icon" />
             {{ t('onboarding.ollama.installedModels') }}
           </h4>
           <div class="models-list" v-if="installedModels.length > 0">
@@ -66,9 +66,9 @@
                 <span class="model-name">{{ model.name }}</span>
               </div>
               <div class="model-capabilities">
-                <BIconTools :class="{ active: model.capabilities?.tools }" class="capability" />
-                <BIconImage :class="{ active: model.capabilities?.vision }" class="capability" />
-                <BIconLightningChargeFill :class="{ active: model.capabilities?.reasoning }" class="capability" />
+                <WrenchIcon :class="{ active: model.capabilities?.tools }" class="capability" />
+                <ImageIcon :class="{ active: model.capabilities?.vision }" class="capability" />
+                <ZapIcon :class="{ active: model.capabilities?.reasoning }" class="capability" />
               </div>
             </div>
           </div>
@@ -80,7 +80,7 @@
         <!-- Model pulling interface -->
         <div class="pull-section">
           <h4 class="section-title">
-            <BIconDownload class="section-icon" />
+            <DownloadIcon class="section-icon" />
             {{ t('onboarding.ollama.pullModels') }}
           </h4>
           <OllamaModelPull 
@@ -112,17 +112,18 @@
 
 <script setup lang="ts">
 
-import { ref, onMounted, onUnmounted } from 'vue'
+import { CpuIcon, DownloadIcon, ImageIcon, WrenchIcon, ZapIcon } from 'lucide-vue-next'
+import type { ChatModel } from 'multi-llm-ts'
+import { Ollama, } from 'ollama/dist/browser.cjs'
+import { onMounted, onUnmounted, ref } from 'vue'
+import EngineLogo from '../components/EngineLogo.vue'
+import OllamaModelPull from '../components/OllamaModelPull.vue'
+import Dialog from '../composables/dialog'
+import * as IPC from '../ipc_consts'
+import LlmManager from '../llms/manager'
+import { getChatModels } from '../llms/ollama'
 import { t } from '../services/i18n'
 import { store } from '../services/store'
-import { Ollama, } from 'ollama/dist/browser.cjs'
-import LlmManager from '../llms/manager'
-import OllamaModelPull from '../components/OllamaModelPull.vue'
-import EngineLogo from '../components/EngineLogo.vue'
-import Dialog from '../composables/dialog'
-import { getChatModels } from '../llms/ollama'
-import type { ChatModel } from 'multi-llm-ts'
-import * as IPC from '../ipc_consts'
 
 const state = ref<'hidden' | 'checking' | 'not-installed' | 'installed' | 'error'>('hidden')
 const downloading = ref(false)
@@ -396,12 +397,12 @@ defineExpose({
     gap: 0.75rem;
     margin-bottom: 1.25rem;
     font-size: 1.125rem;
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     color: var(--text-color);
     
     .section-icon {
-      width: 1.25rem;
-      height: 1.25rem;
+      width: var(--icon-lg);
+      height: var(--icon-lg);
       color: var(--accent-color);
       opacity: 0.8;
     }
@@ -433,7 +434,7 @@ defineExpose({
 }
 
 .model-name {
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   font-size: 0.875rem;
   color: var(--text-color);
   overflow: hidden;
@@ -475,12 +476,12 @@ defineExpose({
     gap: 0.75rem;
     margin-bottom: 1.25rem;
     font-size: 1.125rem;
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     color: var(--text-color);
     
     .section-icon {
-      width: 1.25rem;
-      height: 1.25rem;
+      width: var(--icon-lg);
+      height: var(--icon-lg);
       color: var(---color);
       opacity: 0.8;
     }

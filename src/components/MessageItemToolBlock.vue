@@ -1,15 +1,16 @@
 <template>
-  <div class="tool-container" @click="toggleOpen">
+  <div class="tool-container" :class="{ canceled: toolCall.state === 'canceled' }" @click="toggleOpen" @selectstart="onSelectStart" @mouseup="onMouseUp">
     <div class="tool-header">
-      <div class="tool-name">{{ name }}</div>
+      <PluginIcon :tool="name" />
+      <div class="tool-name">{{ title }}</div>
       <div v-if="!toolCall.done" class="tool-loader">
         <Loader /><Loader /><Loader />
       </div>
-      <BIconChevronDown v-else-if="!isOpen" class="tool-unfold"/>
-      <BIconChevronUp v-else class="tool-fold" />
+      <ChevronDownIcon v-else-if="!isOpen" class="tool-unfold"/>
+      <ChevronRightIcon v-else class="tool-fold" />
     </div>
     <div class="tool-results" v-if="isOpen">
-      <MessageItemSearchToolBlock v-if="toolCall.name === 'search_internet' && toolCall.result?.results?.length" :toolCall="toolCall" /> 
+      <MessageItemSearchToolBlock v-if="toolCall.name === kSearchPluginName && toolCall.result?.results?.length" :toolCall="toolCall" /> 
     </div>
     <div class="tool-values tool-params" v-if="toolCall?.params && isOpen">
       <div class="tool-values-header">
@@ -42,11 +43,14 @@
 
 <script setup lang="ts">
 
-import { ToolCall } from '../types/index'
-import { ref, onMounted, computed } from 'vue'
+import { ChevronDownIcon, ChevronRightIcon } from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
+import { kSearchPluginName } from '../plugins/search'
 import { t } from '../services/i18n'
-import MessageItemSearchToolBlock from './MessageItemSearchToolBlock.vue'
+import { ToolCall } from '../types/index'
 import Loader from './Loader.vue'
+import MessageItemSearchToolBlock from './MessageItemSearchToolBlock.vue'
+import PluginIcon from './PluginIcon.vue'
 
 const props = defineProps({
   toolCall: {
@@ -56,8 +60,17 @@ const props = defineProps({
 })
 
 const isOpen = ref(false)
+const isSelecting = ref(false)
 
 const name = computed(() => {
+  if (props.toolCall.status?.includes('MCP')) {
+    return 'mcp'
+  } else {
+    return props.toolCall.name || ''
+  }
+})
+
+const title = computed(() => {
   if (props.toolCall.status) return props.toolCall.status
   const toolName = props.toolCall.name || ''
   const name = window.api.mcp.originalToolName(toolName)
@@ -65,13 +78,18 @@ const name = computed(() => {
 })
 
 onMounted(() => {
-  const opened = JSON.parse(window.localStorage.getItem('opened-tools') || '[]')
+  const opened = JSON.parse(window.sessionStorage.getItem('opened-tools') || '[]')
   isOpen.value = opened.includes(props.toolCall.id)
 })
 
 const toggleOpen = () => {
+
+  if (isSelecting.value) {
+    return
+  }
+  
   isOpen.value = !isOpen.value
-  const opened = JSON.parse(window.localStorage.getItem('opened-tools') || '[]')
+  const opened = JSON.parse(window.sessionStorage.getItem('opened-tools') || '[]')
   if (isOpen.value) {
     if (!opened.includes(props.toolCall.id)) {
       opened.push(props.toolCall.id)
@@ -82,7 +100,21 @@ const toggleOpen = () => {
       opened.splice(index, 1)
     }
   }
-  window.localStorage.setItem('opened-tools', JSON.stringify(opened))
+  window.sessionStorage.setItem('opened-tools', JSON.stringify(opened))
+}
+
+const onSelectStart = () => {
+  isSelecting.value = true
+}
+
+const onMouseUp = () => {
+  if (!window.getSelection()?.toString().length) {
+    isSelecting.value = false
+  } else {
+    setTimeout(() => {
+      isSelecting.value = false
+    }, 250)
+  }
 }
 
 </script>
@@ -98,15 +130,17 @@ const toggleOpen = () => {
   border-radius: 8px;
   font-size: 0.9em;
   cursor: pointer;
+  user-select: text;
 
   .tool-header {
     display: flex;
     padding: 0.5rem 1rem;
     align-items: center;
+    gap: 0.5rem;
     
     .tool-name {
       flex: 1;
-      font-weight: 600;
+      font-weight: var(--font-weight-semibold);
     }
     
     .tool-loader {
@@ -136,7 +170,7 @@ const toggleOpen = () => {
     padding: 0.5rem;
 
     .tool-values-header {
-      font-weight: 500;
+      font-weight: var(--font-weight-medium);
       margin-bottom: 0.5rem;
     }
 
@@ -151,7 +185,7 @@ const toggleOpen = () => {
         display: contents;
 
         .value-key {
-          font-weight: 500;
+          font-weight: var(--font-weight-medium);
           color: var(--tool-key-text-color);
         }
 
@@ -160,6 +194,15 @@ const toggleOpen = () => {
           word-break: break-all;
         }
       }
+    }
+  }
+
+  &.canceled {
+    opacity: 0.6;
+
+    .tool-header .tool-name {
+      text-decoration: line-through;
+      color: var(--dimmed-text-color);
     }
   }
 

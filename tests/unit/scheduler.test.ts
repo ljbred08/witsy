@@ -2,23 +2,26 @@ import { beforeEach, describe, expect, test, vi, afterEach } from 'vitest'
 import { App } from 'electron'
 import Scheduler from '../../src/main/scheduler'
 import Mcp from '../../src/main/mcp'
-import Runner from '../../src/services/runner'
 import Agent from '../../src/models/agent'
 import * as configModule from '../../src/main/config'
 import * as agentsModule from '../../src/main/agents'
 import * as interpreterModule from '../../src/main/interpreter'
+import * as workspaceModule from '../../src/main/workspace'
 import * as i18nModule from '../../src/services/i18n'
 import * as mainI18nModule from '../../src/main/i18n'
+import { WorkspaceHeader } from '../../src/types/workspace'
 
 // Mock external dependencies
 vi.mock('cron-parser')
 vi.mock('../../src/main/config')
 vi.mock('../../src/main/agents')
+vi.mock('../../src/main/agent_utils')
 vi.mock('../../src/main/interpreter')
-vi.mock('../../src/services/i18n')
 vi.mock('../../src/main/i18n')
-vi.mock('../../src/services/runner')
 vi.mock('../../src/main/search')
+vi.mock('../../src/main/workspace')
+vi.mock('../../src/services/agent_executor_workflow')
+vi.mock('../../src/services/i18n')
 
 // Mock CronExpressionParser
 const mockCronParser = {
@@ -27,6 +30,8 @@ const mockCronParser = {
 }
 
 vi.mocked(await import('cron-parser')).CronExpressionParser = mockCronParser as any
+
+vi.mock('fs')
 
 describe('Scheduler', () => {
   let scheduler: Scheduler
@@ -79,7 +84,7 @@ describe('Scheduler', () => {
 
     // Create mock MCP
     mockMcp = {
-      getTools: vi.fn(() => []),
+      getLlmTools: vi.fn(() => []),
       callTool: vi.fn(),
       isAvailable: vi.fn(() => true)
     } as any
@@ -105,17 +110,19 @@ describe('Scheduler', () => {
     vi.mocked(agentsModule.loadAgents).mockReturnValue(mockAgents)
     vi.mocked(agentsModule.saveAgentRun).mockReturnValue(true)
     vi.mocked(interpreterModule.runPython).mockResolvedValue('python result')
+    vi.mocked(workspaceModule.listWorkspaces).mockReturnValue([{uuid: '123'} as WorkspaceHeader])
     vi.mocked(i18nModule.initI18n).mockReturnValue(undefined)
     vi.mocked(mainI18nModule.getLocaleMessages).mockReturnValue({})
 
-    // Mock Runner
-    const mockRunner = {
-      run: vi.fn()
-    }
-    vi.mocked(Runner).mockImplementation(() => mockRunner as any)
-
     // Create scheduler instance
     scheduler = new Scheduler(mockApp, mockMcp)
+
+    // Mock runAgent method on the scheduler instance
+    vi.spyOn(scheduler, 'runAgent').mockResolvedValue({
+      uuid: 'run-1',
+      agentId: 'agent-1',
+      status: 'success'
+    } as any)
 
     // Mock start method to prevent infinite loops in tests
     vi.spyOn(scheduler, 'start').mockResolvedValue(undefined)
@@ -135,60 +142,10 @@ describe('Scheduler', () => {
   })
 
   test('Constructor initializes correctly', () => {
-    expect(scheduler.app).toBe(mockApp)
-    expect(scheduler.mcp).toBe(mockMcp)
+    expect(scheduler).toBeInstanceOf(Scheduler)
     expect(scheduler.timeout).toBe(null)
-    expect(i18nModule.initI18n).toHaveBeenCalled()
   })
 
-  test('Constructor sets up window mock correctly', () => {
-    expect((global as any).window).toBeDefined()
-    expect((global as any).window.api).toBeDefined()
-    expect((global as any).window.api.config).toBeDefined()
-    expect((global as any).window.api.agents).toBeDefined()
-    expect((global as any).window.api.interpreter).toBeDefined()
-    expect((global as any).window.api.search).toBeDefined()
-    expect((global as any).window.api.mcp).toBeDefined()
-  })
-
-  test('Window mock config functions work correctly', () => {
-    const window = (global as any).window
-
-    expect(window.api.config.localeUI()).toBe('en-US')
-    expect(window.api.config.localeLLM()).toBe('en-US')
-    expect(window.api.config.getI18nMessages()).toEqual({})
-  })
-
-  test('Window mock agents functions work correctly', () => {
-    const window = (global as any).window
-
-    expect(window.api.agents.load()).toEqual(mockAgents)
-    expect(window.api.agents.saveRun({ uuid: 'test' })).toBe(true)
-  })
-
-  test('Window mock interpreter function works correctly', async () => {
-    const window = (global as any).window
-
-    const result = await window.api.interpreter.python('print("hello")')
-    expect(result).toEqual({ result: 'python result' })
-    expect(interpreterModule.runPython).toHaveBeenCalledWith('print("hello")')
-  })
-
-  test('Window mock interpreter handles errors correctly', async () => {
-    const window = (global as any).window
-    vi.mocked(interpreterModule.runPython).mockRejectedValueOnce(new Error('Python error'))
-
-    const result = await window.api.interpreter.python('invalid code')
-    expect(result).toEqual({ error: new Error('Python error') })
-  })
-
-  test('Window mock MCP functions work correctly', () => {
-    const window = (global as any).window
-
-    expect(window.api.mcp.isAvailable()).toBe(true)
-    expect(window.api.mcp.getTools).toBe(mockMcp.getTools)
-    expect(window.api.mcp.callTool).toBe(mockMcp.callTool)
-  })
 
   test('stop() clears timeout', () => {
     scheduler.timeout = 'some-timeout' as any
@@ -269,10 +226,7 @@ describe('Scheduler', () => {
     await scheduler.check()
 
     expect(agent.buildPrompt).toHaveBeenCalledWith(0, { param1: 'value1' })
-    expect(Runner).toHaveBeenCalledWith(mockConfig, agent)
-
-    const runnerInstance = vi.mocked(Runner).mock.results[0].value
-    expect(runnerInstance.run).toHaveBeenCalledWith('schedule', mockPrompt)
+    expect(scheduler.runAgent).toHaveBeenCalledWith('123', agent, 'schedule', mockPrompt)
   })
 
   test('check() handles agent execution errors gracefully', async () => {
@@ -300,7 +254,7 @@ describe('Scheduler', () => {
     await scheduler.check()
 
     expect(console.log).toHaveBeenCalledWith('Error running agent Error Agent', expect.any(Error))
-    expect(Runner).not.toHaveBeenCalled()
+    expect(scheduler.runAgent).not.toHaveBeenCalled()
   })
 
   test('check() handles cron parsing errors gracefully', async () => {
@@ -378,7 +332,7 @@ describe('Scheduler', () => {
     await scheduler.check()
 
     expect(agent.buildPrompt).not.toHaveBeenCalled()
-    expect(Runner).not.toHaveBeenCalled()
+    expect(scheduler.runAgent).not.toHaveBeenCalled()
   })
 
   test('check() processes multiple agents correctly', async () => {
@@ -421,7 +375,7 @@ describe('Scheduler', () => {
     expect(agent1.buildPrompt).toHaveBeenCalled()
     expect(agent2.buildPrompt).not.toHaveBeenCalled()
     expect(agent3.buildPrompt).not.toHaveBeenCalled()
-    expect(Runner).toHaveBeenCalledTimes(1)
+    expect(scheduler.runAgent).toHaveBeenCalledTimes(1)
   })
 
   test('check() reschedules itself after processing', async () => {
@@ -433,32 +387,6 @@ describe('Scheduler', () => {
     expect(startSpy).toHaveBeenCalled()
   })
 
-  test('Window mock search function works correctly', () => {
-    // Mock LocalSearch since it's imported in the scheduler
-    const LocalSearch = vi.fn().mockImplementation(() => ({
-      search: vi.fn().mockReturnValue(['search result 1', 'search result 2'])
-    }))
-    
-    // Replace the LocalSearch in global mock temporarily
-    const window = (global as any).window
-    const originalSearchQuery = window.api.search.query
-    
-    window.api.search.query = (payload: any) => {
-      const { query, num } = payload
-      const localSearch = new LocalSearch()
-      return localSearch.search(query, num)
-    }
-    
-    expect(typeof window.api.search.query).toBe('function')
-    
-    // Call it to ensure it doesn't throw
-    const result = window.api.search.query({ query: 'test', num: 5 })
-    expect(result).toBeDefined()
-    expect(result).toEqual(['search result 1', 'search result 2'])
-    
-    // Restore
-    window.api.search.query = originalSearchQuery
-  })
 
   test('Complex scenario - full scheduling workflow', async () => {
     // Setup multiple agents with different schedules
@@ -496,10 +424,8 @@ describe('Scheduler', () => {
     expect(scheduledAgent.buildPrompt).toHaveBeenCalledWith(0, { format: 'pdf' })
     expect(nonScheduledAgent.buildPrompt).not.toHaveBeenCalled()
 
-    // Verify runner was created and executed
-    expect(Runner).toHaveBeenCalledWith(mockConfig, scheduledAgent)
-    const runnerInstance = vi.mocked(Runner).mock.results[0].value
-    expect(runnerInstance.run).toHaveBeenCalledWith('schedule', 'Generate daily report in pdf format')
+    // Verify runAgent was called
+    expect(scheduler.runAgent).toHaveBeenCalledWith('123', scheduledAgent, 'schedule', 'Generate daily report in pdf format')
 
     // Verify console logging
     expect(console.log).toHaveBeenCalledWith('Agent Daily Report Agent is due to run')

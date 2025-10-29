@@ -4,17 +4,17 @@
       {{ t('settings.plugins.filesystem.description') }}
     </div>
     <div class="form-field horizontal">
-      <input type="checkbox" name="enabled" v-model="enabled" @change="save" />
-      <label>{{ t('common.enabled') }}</label>
+      <input type="checkbox" id="filesystem-enabled" name="enabled" v-model="enabled" @change="save" />
+      <label for="filesystem-enabled">{{ t('common.enabled') }}</label>
     </div>
     <template v-if="enabled">
       <div class="form-field horizontal">
-        <input type="checkbox" name="enabled" v-model="allowWrite" @change="onAllowWrite" />
-        <label>{{ t('settings.plugins.filesystem.allowWrite') }}</label>
+        <input type="checkbox" id="filesystem-allow-write" name="enabled" v-model="allowWrite" @change="onAllowWrite" />
+        <label for="filesystem-allow-write">{{ t('settings.plugins.filesystem.allowWrite') }}</label>
       </div>
       <div class="form-field horizontal">
-        <input type="checkbox" name="enabled" :disabled="!allowWrite" v-model="skipConfirmation" @change="onSkipConfirmation" />
-        <label>{{ t('settings.plugins.filesystem.skipConfirmation') }}</label>
+        <input type="checkbox" id="filesystem-skip-confirmation" name="enabled" :disabled="!allowWrite" v-model="skipConfirmation" @change="onSkipConfirmation" />
+        <label for="filesystem-skip-confirmation">{{ t('settings.plugins.filesystem.skipConfirmation') }}</label>
       </div>
       <div class="form-field form-vertical">
         <label>{{ t('settings.plugins.filesystem.allowedPaths') }}</label>
@@ -29,8 +29,8 @@
             </table>
           </div>
           <div class="actions">
-            <button class="button add" @click.prevent="addPath"><BIconPlus /></button>
-            <button class="button remove" @click.prevent="removePath" :disabled="selectedPath === null"><BIconDash /></button>
+            <button class="button add" @click.prevent="addPath"><PlusIcon /></button>
+            <button class="button remove" @click.prevent="removePath" :disabled="selectedPath === null"><MinusIcon /></button>
           </div>
         </div>
         <div class="note">
@@ -43,10 +43,11 @@
 
 <script setup lang="ts">
 
+import { MinusIcon, PlusIcon } from 'lucide-vue-next'
 import { ref } from 'vue'
-import { store } from '../services/store'
-import { t } from '../services/i18n'
 import Dialog from '../composables/dialog'
+import { t } from '../services/i18n'
+import { store } from '../services/store'
 
 const enabled = ref(false)
 const allowedPaths = ref<string[]>([])

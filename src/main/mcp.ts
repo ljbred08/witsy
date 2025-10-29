@@ -1,41 +1,175 @@
 
-import { anyDict } from '../types/index'
-import { App } from 'electron'
-import { McpInstallStatus, McpServer, McpClient, McpStatus, McpTool } from '../types/mcp'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth'
 import { CompatibilityCallToolResultSchema } from '@modelcontextprotocol/sdk/types'
-import { loadSettings, saveSettings, settingsFilePath } from './config'
 import { exec } from 'child_process'
+import { app, App } from 'electron'
 import { LlmTool } from 'multi-llm-ts'
+import { anyDict } from '../types/index'
+import { McpClient, McpInstallStatus, McpServer, McpServerWithTools, McpStatus, McpTool } from '../types/mcp'
+import { loadSettings, saveSettings, settingsFilePath } from './config'
+import { useI18n } from './i18n'
+import McpOAuthManager from './mcp_auth'
 import Monitor from './monitor'
+import { wait } from './utils'
+import { notifyBrowserWindows } from './windows'
+
+type ToolsCacheEntry = {
+  tools: any
+  timestamp: number
+}
 
 export default class {
+
+  private readonly CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
   app: App
   monitor: Monitor|null
   currentConfig: string|null
   clients: McpClient[]
   logs: { [key: string]: string[] }
-  
+  oauthManager: McpOAuthManager
+  toolsCache: Map<string, ToolsCacheEntry>
+
   constructor(app: App) {
     this.app = app
     this.clients = []
     this.monitor = null
     this.currentConfig = null
     this.logs = {}
+    this.oauthManager = new McpOAuthManager(app)
+    this.toolsCache = new Map()
+  }
+
+  private getCachedTools = async (client: McpClient): Promise<any> => {
+    
+    const uuid = client.server.uuid
+    const cached = this.toolsCache.get(uuid)
+
+    if (cached && cached.tools === null) {
+      return { tools: [] } // Previous error, return empty tools
+    }
+    
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
+      return cached.tools
+    }
+
+    try {
+
+      // Cache miss or expired, fetch new tools
+      const tools = await client.client.listTools()
+      this.toolsCache.set(uuid, {
+        tools,
+        timestamp: Date.now()
+      })
+      
+      return tools
+
+    } catch (e) {
+
+      console.error(`[mcp] Failed to get tools from MCP server ${client.server.url}:`, e)
+      this.logs[uuid].push(`[mcp] Failed to get tools`)
+      this.toolsCache.set(uuid, {
+        tools: null,
+        timestamp: 0
+      })
+      return []
+    }
+
+  }
+
+  private invalidateToolsCache = (uuid?: string): void => {
+    if (uuid) {
+      this.toolsCache.delete(uuid)
+    } else {
+      this.toolsCache.clear()
+    }
   }
 
   getStatus = (): McpStatus => {
+
+    const allServers = this.getServers()
+    const statusServers = []
+
+    for (const server of allServers) {
+      // Skip disabled servers
+      if (server.state === 'disabled') {
+        continue
+      }
+
+      const persistentClient = this.clients.find(c => c.server.uuid === server.uuid)
+      if (persistentClient) {
+        statusServers.push({
+          ...persistentClient.server,
+          tools: persistentClient.tools
+        })
+        continue
+      }
+
+      // Check cache for non-persistent servers
+      const cached = this.toolsCache.get(server.uuid)
+      if (cached) {
+        if (cached.tools !== undefined) {
+          // We have tools (success) or null (error)
+          const tools = Array.isArray(cached.tools?.tools) ? cached.tools.tools : []
+          const toolNames = tools.map((tool: any) => this.uniqueToolName(server, tool.name))
+          statusServers.push({
+            ...server,
+            tools: cached.tools === null ? null : toolNames
+          })
+        }
+      } else {
+        // No cache entry yet - server is starting
+        statusServers.push({
+          ...server,
+          tools: undefined
+        })
+      }
+    }
+
     return {
-      servers: this.clients.map(client => ({
-        ...client.server,
-        tools: client.tools
-      })),
+      servers: statusServers,
       logs: this.logs
     }
+  }
+
+  getAllServersWithTools = async (): Promise<McpServerWithTools[]> => {
+    const results: McpServerWithTools[] = []
+    
+    for (const client of this.clients) {
+      try {
+        const tools = await this.getCachedTools(client)
+        const mcpTools: McpTool[] = tools.tools.filter((tool: any) => {
+          if (Array.isArray(client.server.toolSelection) && !client.server.toolSelection.includes(tool.name)) {
+            return false
+          } else {
+            return true
+          }
+        }).map((tool: any) => ({
+          name: tool.name,
+          description: tool.description || tool.name
+        }))
+        
+        results.push({
+          ...client.server,
+          tools: mcpTools.map(t => ({
+            uuid: this.uniqueToolName(client.server, t.name),
+            ...t,
+          }))
+        })
+      } catch (e) {
+        console.error(`[mcp] Failed to get tools from MCP server ${client.server.url}:`, e)
+        results.push({
+          ...client.server,
+          tools: []
+        })
+      }
+    }
+    
+    return results
   }
 
   getServers = (): McpServer[] => {
@@ -65,7 +199,10 @@ export default class {
 
     // now we can do it
     return [
-      ...config.mcp.servers,
+      ...config.mcp.servers.map((server: McpServer) => ({
+        ...server,
+        toolSelection: server.toolSelection ?? null
+      })),
       ...Object.keys(config.mcpServers).reduce((arr: McpServer[], key: string) => {
         arr.push({
           uuid: key.replace('@', ''),
@@ -76,7 +213,9 @@ export default class {
           command: config.mcpServers[key].command,
           url: config.mcpServers[key].args.join(' '),
           cwd: config.mcpServers[key].cwd,
-          env: config.mcpServers[key].env
+          env: config.mcpServers[key].env,
+          oauth: config.mcp.mcpServersExtra[key]?.oauth || undefined,
+          toolSelection: config.mcp.mcpServersExtra[key]?.toolSelection || null
         })
         return arr
       }, [])
@@ -94,6 +233,9 @@ export default class {
     if (client) {
       this.disconnect(client)
     }
+
+    // invalidate cache for this server
+    this.invalidateToolsCache(uuid)
 
     // is it a normal server
     if (config.mcp.servers.find((s: McpServer) => s.uuid === uuid)) {
@@ -138,14 +280,14 @@ export default class {
         const childProcess = exec(command)
 
         childProcess.on('error', (error) => {
-          console.error(`Error installing MCP server ${server}:`, error)
+          console.error(`[mcp] Error installing MCP server ${server}:`, error)
           this.logs[server].push(`Error installing MCP server ${server}: ${error.message}`)
           reject('error')
         })
 
         childProcess.stderr.on('data', (data: Buffer) => {
           const stderr = data.toString()
-          console.error(`MCP install ${server} stderr:`, stderr)
+          console.error(`[mcp] MCP install ${server} stderr:`, stderr)
           this.logs[server].push(`MCP install ${server} stderr: ${stderr}`)
 
           if (stderr.includes('Failed to install')) {
@@ -165,7 +307,7 @@ export default class {
 
         childProcess.stdout.on('data', (data: Buffer) => {
           const stdout = data.toString()
-          console.log(`MCP install ${server} stdout:`, stdout)
+          console.log(`[mcp] MCP install ${server} stdout:`, stdout)
           this.logs[server].push(`MCP install ${server} stdout: ${stdout}`)
 
           if (stdout.includes('successfully installed')) {
@@ -218,7 +360,7 @@ export default class {
     const config = loadSettings(this.app)
 
     // create?
-    if (server.uuid === null) {
+    if (!server.uuid) {
       server.uuid = crypto.randomUUID()
       server.registryId = server.uuid
       config.mcp.servers.push(server)
@@ -230,6 +372,9 @@ export default class {
     if (client) {
       this.disconnect(client)
     }
+
+    // invalidate cache for this server
+    this.invalidateToolsCache(server.uuid)
 
     // search for server in normal server
     const original = config.mcp.servers.find((s: McpServer) => s.uuid === server.uuid)
@@ -248,6 +393,8 @@ export default class {
       original.cwd = server.cwd
       original.env = server.env
       original.headers = server.headers
+      original.oauth = server.oauth
+      original.toolSelection = server.toolSelection ?? null
       edited = true
     }
 
@@ -260,8 +407,9 @@ export default class {
         config.mcp.mcpServersExtra[server.registryId] = {}
       }
 
-      // state
+      // extra
       config.mcp.mcpServersExtra[server.registryId].state = server.state
+      config.mcp.mcpServersExtra[server.registryId].toolSelection = server.toolSelection ?? null
       
       // label
       if (server.label !== undefined) {
@@ -278,6 +426,7 @@ export default class {
       originalMcp.cwd = server.cwd
       originalMcp.env = server.env
       originalMcp.headers = server.headers
+      config.mcp.mcpServersExtra[server.registryId].oauth = server.oauth
       edited = true
     }
 
@@ -295,11 +444,58 @@ export default class {
 
   }
 
+  updateTokens = async (server: McpServer, tokens: OAuthTokens, scope: string): Promise<boolean> => {
+
+    // we need a config
+    const config = loadSettings(this.app)
+
+    // create?
+    if (server.uuid === null) {
+      return false
+    }
+
+    // save only if needed
+    let edited = false
+
+    // search for server in normal server
+    const original = config.mcp.servers.find((s: McpServer) => s.uuid === server.uuid)
+    if (original && original.oauth) {
+      if (JSON.stringify(original.oauth.tokens) !== JSON.stringify(tokens)) {
+        original.oauth.tokens = tokens
+        original.oauth.scope = scope
+        edited = true
+      }
+    }
+
+    // and in mcp servers
+    const originalMcp = config.mcpServers[server.registryId]
+    if (originalMcp && config.mcp.mcpServersExtra[server.registryId].oauth) {
+      if (JSON.stringify(config.mcp.mcpServersExtra[server.registryId].oauth.tokens) !== JSON.stringify(tokens)) {
+        config.mcp.mcpServersExtra[server.registryId].oauth.tokens = tokens
+        config.mcp.mcpServersExtra[server.registryId].oauth.scope = scope
+        edited = true
+      }
+    }
+
+    // save
+    if (edited) {
+      this.monitor?.stop()
+      saveSettings(this.app, config)
+      this.startConfigMonitor()
+    }
+
+    // done
+    return true
+
+  }  
+
   shutdown = async (): Promise<void> => {
     for (const client of this.clients) {
       await client.client.close()
     }
     this.clients = []
+    this.invalidateToolsCache()
+    this.oauthManager.shutdown()
   }
 
   reload = async (): Promise<void> => {
@@ -307,6 +503,35 @@ export default class {
     await this.connect()
   }
 
+  restartServer = async (uuid: string): Promise<boolean> => {
+
+    const servers = this.getServers()
+    const server = servers.find(s => s.uuid === uuid)
+    if (!server || server.state !== 'enabled') return false
+
+    // Step 1: Disconnect and clear cache to show "starting" status
+    const mcpClient = this.clients.find((c: McpClient) => c.server.uuid === server.uuid)
+    if (mcpClient) {
+      this.disconnect(mcpClient)
+    }
+
+    // Clear cache to set tools = undefined (starting status)
+    this.toolsCache.delete(server.uuid)
+
+    // Notify UI to show "starting" status
+    notifyBrowserWindows('mcp-servers-updated')
+
+    // Step 2: Small delay to ensure UI updates (use existing wait utility)
+    await wait(100)
+
+    // Step 3: Reconnect
+    const success = await this.connectToServer(server)
+
+    // Final notification is already handled by connectToServer
+
+    return success
+  }
+  
   connect = async (): Promise<void> => {
 
     // now connect to servers
@@ -320,7 +545,7 @@ export default class {
     this.startConfigMonitor()
 
     // done
-    console.log('MCP servers connected', this.clients.map(client => client.server.uuid))
+    console.log('[mcp] Servers connected', this.clients.map(client => client.server.uuid))
 
   }
 
@@ -329,7 +554,7 @@ export default class {
       this.monitor = new Monitor(() => {
         const servers = this.getServers()
         if (JSON.stringify(servers) !== this.currentConfig) {
-          console.log('MCP servers changed, reloading')
+          console.log('[mcp] Servers changed, reloading')
           this.reload()
         }
       })
@@ -367,7 +592,12 @@ export default class {
     }
 
     if (!client) {
-      console.error(`Failed to connect to MCP server ${server.url}`)
+      console.error(`[mcp] Failed to connect to MCP server ${server.url}`)
+      this.toolsCache.set(server.uuid, {
+        tools: null,
+        timestamp: 0,
+      })
+      notifyBrowserWindows('mcp-servers-updated')
       return false
     }
 
@@ -377,8 +607,8 @@ export default class {
     // })
 
     // get tools
-    const tools = await client.listTools()
-    const toolNames = tools.tools.map(tool => this.uniqueToolName(server, tool.name))
+    const tools = await this.getCachedTools({ client, server, tools: [] } as McpClient)
+    const toolNames = tools.tools.map((tool: any) => this.uniqueToolName(server, tool.name))
 
     // store
     this.clients.push({
@@ -398,7 +628,11 @@ export default class {
 
       // build command and args
       const command = process.platform === 'win32' ? 'cmd' : server.command
-      const args = process.platform === 'win32' ? ['/C', `"${server.command}" ${server.url}`] : server.url.split(' ')
+      const args = process.platform === 'win32'
+        ? ['/C', `"${server.command}" ${server.url}`]
+        : server.url.match(/"[^"]+"|'[^']+'|\S+/g) || [];
+      
+      // now environment
       let env = {
         ...getDefaultEnvironment(),
         ...server.env,
@@ -417,7 +651,7 @@ export default class {
       // working directory
       const cwd = server.cwd || undefined
 
-      // console.log('MCP Stdio command', process.platform, command, args, env)
+      // console.log('[mcp] MCP Stdio command', process.platform, command, args, env)
 
       const transport = new StdioClientTransport({
         command, args, env, stderr: 'pipe', cwd
@@ -432,7 +666,7 @@ export default class {
 
       // build the client
       const client = new Client({
-        name: 'witsy-mcp-client',
+        name: `${useI18n(app)('common.appName').toLowerCase()}-oauth-client`,
         version: '1.0.0'
       }, {
         capabilities: { tools: {} }
@@ -450,7 +684,7 @@ export default class {
       return client
 
     } catch (e) {
-      console.error(`Failed to connect to MCP server ${server.command} ${server.url}:`, e)
+      console.error(`[mcp] Failed to connect to MCP server ${server.command} ${server.url}:`, e)
       this.logs[server.uuid].push(`Failed to connect to MCP server "${server.command} ${server.url}"\n`)
       this.logs[server.uuid].push(`Error: ${e.message}\n`)
       if (e.message.startsWith('spawn')) {
@@ -472,39 +706,95 @@ export default class {
 
     try {
 
+      // track unique errors to avoid duplicates
+      const seenErrors = new Set<string>()
+
+      // prepare transport options
+      const transportOptions: any = {}
+
+      // add OAuth provider if configured
+      if (server.oauth && (server.oauth.tokens || server.oauth.clientId)) {
+
+        const clientMetadata = await this.oauthManager.getClientMetadata(server.oauth.tokens?.scope ?? server.oauth.scope)
+        const oauthProvider = await this.oauthManager.createOAuthProvider(clientMetadata, (redirectUrl) => {
+          console.log(`[mcp] OAuth authorization required. Please visit: ${redirectUrl.toString()}`)
+          this.logs[server.uuid].push(`[mcp] OAuth authorization required. Please visit: ${redirectUrl.toString()}`)
+        }, (tokens: OAuthTokens, scope: string) => {
+          this.updateTokens(server, tokens, scope)
+        })
+
+        // Set existing tokens if available
+        if (server.oauth.tokens) {
+          oauthProvider.saveTokens(server.oauth.tokens)
+        }
+
+        // Set existing client registration if available
+        if (server.oauth.clientId && server.oauth.clientSecret) {
+          // Reconstruct clientInformation from compact format
+          const clientInformation = {
+            client_id: server.oauth.clientId,
+            client_secret: server.oauth.clientSecret,
+            redirect_uris: ['http://localhost:8090/callback'],
+            token_endpoint_auth_method: 'client_secret_post',
+            grant_types: ['authorization_code', 'refresh_token'],
+            response_types: ['code'],
+            client_name: `${useI18n(app)('common.appName')} MCP Client`,
+            ...(server.oauth.scope ? { scope: server.oauth.scope } : {})
+          }
+          oauthProvider.saveClientInformation(clientInformation)
+        }
+        transportOptions.authProvider = oauthProvider
+      }
+
       // get transport
       const transport = new SSEClientTransport(
-        new URL(server.url)
+        new URL(server.url),
+        transportOptions
       )
       transport.onerror = (e) => {
-        this.logs[server.uuid].push(e.message)
+        if (!seenErrors.has(e.message)) {
+          seenErrors.add(e.message)
+          this.logs[server.uuid].push(this.translateError(e.message))
+        }
       }
-      transport.onmessage = (message: any) => {
-        console.log('MCP SSE message', message)
-      }
+      // transport.onmessage = (message: any) => {
+      //   console.log('[mcp] MCP SSE message', message)
+      // }
 
       // build the client
       const client = new Client({
-        name: 'witsy-mcp-client',
+        name: `${useI18n(app)('common.appName').toLowerCase()}-oauth-client`,
         version: '1.0.0'
       }, {
         capabilities: { tools: {} }
       })
 
       client.onerror = (e) => {
-        this.logs[server.uuid].push(e.message)
+        if (!seenErrors.has(e.message)) {
+          seenErrors.add(e.message)
+          this.logs[server.uuid].push(this.translateError(e.message))
+        }
       }
 
       // connect
       await client.connect(transport)
+
+      // add some logs
+      if (this.logs[server.uuid].length === 0) {
+        this.logs[server.uuid].push(`Connected to MCP server at ${server.url}`)
+      }
 
       // done
       return client
 
 
     } catch (e) {
-      console.error(`Failed to connect to MCP server ${server.url}:`, e)
-      this.logs[server.uuid].push(e.message)
+      console.error(`[mcp] Failed to connect to MCP server ${server.url}:`, e)
+      this.logs[server.uuid] = this.logs[server.uuid] || []
+      // Only add catch error if logs are empty (no errors from handlers)
+      if (this.logs[server.uuid].length === 0) {
+        this.logs[server.uuid].push(this.translateError(e.message))
+      }
     }
 
   }
@@ -513,41 +803,95 @@ export default class {
 
     try {
 
-      // get transport
-      const transport = new StreamableHTTPClientTransport(new URL(server.url), {
+      // track unique errors to avoid duplicates
+      const seenErrors = new Set<string>()
+
+      // prepare transport options
+      const transportOptions: any = {
         requestInit: {
           headers: server.headers || {},
         }
-      })
+      }
+
+      // add OAuth provider if configured
+      if (server.oauth && (server.oauth.tokens || server.oauth.clientId)) {
+
+        const clientMetadata = await this.oauthManager.getClientMetadata(server.oauth.tokens.scope ?? server.oauth.scope)
+        const oauthProvider = await this.oauthManager.createOAuthProvider(clientMetadata, (redirectUrl) => {
+          console.log(`[mcp] OAuth authorization required. Please visit: ${redirectUrl.toString()}`)
+          this.logs[server.uuid].push(`[mcp] OAuth authorization required. Please visit: ${redirectUrl.toString()}`)
+        }, (tokens: OAuthTokens, scope: string) => {
+          this.updateTokens(server, tokens, scope)
+        })
+
+        // Set existing tokens if available
+        if (server.oauth.tokens) {
+          oauthProvider.saveTokens(server.oauth.tokens)
+        }
+
+        // Set existing client registration if available
+        if (server.oauth.clientId && server.oauth.clientSecret) {
+          // Reconstruct clientInformation from compact format
+          const clientInformation = {
+            client_id: server.oauth.clientId,
+            client_secret: server.oauth.clientSecret,
+            redirect_uris: ['http://localhost:8090/callback'],
+            token_endpoint_auth_method: 'client_secret_post',
+            grant_types: ['authorization_code', 'refresh_token'],
+            response_types: ['code'],
+            client_name: `${useI18n(app)('common.appName')} MCP Client`,
+            ...(server.oauth.scope ? { scope: server.oauth.scope } : {})
+          }
+          oauthProvider.saveClientInformation(clientInformation)
+        }
+        transportOptions.authProvider = oauthProvider
+      }
+
+      // get transport
+      const transport = new StreamableHTTPClientTransport(new URL(server.url), transportOptions)
       transport.onerror = (e) => {
-        this.logs[server.uuid].push(e.message)
+        if (!seenErrors.has(e.message)) {
+          seenErrors.add(e.message)
+          this.logs[server.uuid].push(this.translateError(e.message))
+        }
       }
-      transport.onmessage = (message: any) => {
-        console.log('MCP HTTP message', message)
-      }
+      // transport.onmessage = (message: any) => {
+      //   console.log('[mcp] HTTP message', message)
+      // }
 
       // build the client
       const client = new Client({
-        name: 'witsy-mcp-client',
+        name: `${useI18n(app)('common.appName').toLowerCase()}-oauth-client`,
         version: '1.0.0'
       }, {
         capabilities: { tools: {} }
       })
 
       client.onerror = (e) => {
-        this.logs[server.uuid].push(e.message)
+        if (!seenErrors.has(e.message)) {
+          seenErrors.add(e.message)
+          this.logs[server.uuid].push(this.translateError(e.message))
+        }
       }
 
       // connect
       await client.connect(transport)
+
+      // add some logs
+      if (this.logs[server.uuid].length === 0) {
+        this.logs[server.uuid].push(`Connected to MCP server at ${server.url}`)
+      }
 
       // done
       return client
 
 
     } catch (e) {
-      console.error(`Failed to connect to MCP server ${server.url}:`, e)
-      this.logs[server.uuid].push(e.message)
+      console.error(`[mcp] Failed to connect to MCP server ${server.url}:`, e)
+      // Only add catch error if logs are empty (no errors from handlers)
+      if (this.logs[server.uuid].length === 0) {
+        this.logs[server.uuid].push(this.translateError(e.message))
+      }
     }
 
   }  
@@ -562,7 +906,7 @@ export default class {
     const client = this.clients.find(client => client.server.uuid === uuid)
     if (!client) return []
 
-    const tools = await client.client.listTools()
+    const tools = await this.getCachedTools(client)
     return tools.tools.map((tool: any) => ({
       name: tool.name,
       description: tool.description    
@@ -570,27 +914,33 @@ export default class {
 
   }
 
-  getTools = async (): Promise<LlmTool[]> => {
+  getLlmTools = async (): Promise<LlmTool[]> => {
     const allTools: LlmTool[] = []
     for (const client of this.clients) {
       try {
-        const tools = await client.client.listTools()
+        const tools = await this.getCachedTools(client)
         for (const tool of tools.tools) {
+
+          // skip disabled tools
+          if (Array.isArray(client.server.toolSelection) && !client.server.toolSelection.includes(tool.name)) {
+            continue
+          }
+
           try {
             const functionTool = this.mcpToOpenAI(client.server, tool)
             allTools.push(functionTool)
           } catch (e) {
-            console.error(`Failed to convert MCP tool ${tool.name} from MCP server ${client.server.url} to OpenAI tool:`, e)
+            console.error(`[mcp] Failed to convert MCP tool ${tool.name} from MCP server ${client.server.url} to OpenAI tool:`, e)
           }
         }
       } catch (e) {
-        console.error(`Failed to get tools from MCP server ${client.server.url}:`, e)
+        console.error(`[mcp] Failed to get tools from MCP server ${client.server.url}:`, e)
       }
     }
     return allTools
   }
 
-  callTool = async (name: string, args: anyDict): Promise<any> => {
+  callTool = async (name: string, args: anyDict, abortSignal?: AbortSignal): Promise<any> => {
 
     const client = this.clients.find(client => client.tools.includes(name))
     if (!client) {
@@ -599,12 +949,12 @@ export default class {
 
     // remove unique suffix
     const tool = this.originalToolName(name)
-    console.log('Calling MCP tool', tool, args)
+    console.log(`[mcp] Calling MCP tool`, tool, args)
 
     return await client.client.callTool({
       name: tool,
       arguments: args
-    }, CompatibilityCallToolResultSchema)
+    }, CompatibilityCallToolResultSchema, { signal: abortSignal })
 
   }
 
@@ -612,8 +962,30 @@ export default class {
     return name.replace(/___....$/, '')
   }
 
+
   protected uniqueToolName(server: McpServer, name: string): string {
     return `${name}___${server.uuid.padStart(4, '_').slice(-4)}`
+  }
+
+  private translateError(errorMessage: string): string {
+    const i18n = useI18n(this.app)
+
+    // Check for fetch/connection errors
+    if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED')) {
+      return i18n('mcp.connectionErrors.fetchFailed')
+    }
+
+    // Check for OAuth/auth errors
+    if (errorMessage.includes('POSTing to endpoint') && errorMessage.includes('HTTP 500')) {
+      return i18n('mcp.connectionErrors.authFailed')
+    }
+
+    if (errorMessage.includes('server_error') || errorMessage.includes('Internal Server Error')) {
+      return i18n('mcp.connectionErrors.authFailed')
+    }
+
+    // Return original message if no translation found
+    return errorMessage
   }
 
   protected mcpToOpenAI = (server: McpServer, tool: any): LlmTool => {
@@ -637,6 +1009,44 @@ export default class {
         }
       }
     }
+  }
+
+  // OAuth delegation methods
+  detectOAuth = async (type: 'http' | 'sse', url: string, headers: Record<string, string>) => {
+    return this.oauthManager.detectOAuth(type, url, headers)
+  }
+
+  startOAuthFlow = async (type: 'http' | 'sse', url: string, clientMetadata: any, clientCredentials?: { client_id: string; client_secret: string }): Promise<string> => {
+    return this.oauthManager.startOAuthFlow(type, url, clientMetadata, clientCredentials)
+  }
+
+  completeOAuthFlow = async (serverUuid: string, authorizationCode: string): Promise<boolean> => {
+    const server = this.getServers().find(s => s.uuid === serverUuid)
+    if (!server || !server.oauth) {
+      // Check if OAuth manager can handle it (for interactive flows)
+      return this.oauthManager.completeOAuthFlow(serverUuid, authorizationCode)
+    }
+
+    try {
+      // First try to complete through the OAuth manager (for interactive flows)
+      const managerResult = await this.oauthManager.completeOAuthFlow(serverUuid, authorizationCode)
+      if (managerResult) {
+        return true
+      }
+
+      // If that didn't work, try the transport method (for existing connected clients)
+      const client = this.clients.find(c => c.server.uuid === serverUuid)
+      if (client && client.client.transport && 'finishAuth' in client.client.transport) {
+        // Complete the OAuth flow
+        await (client.client.transport as any).finishAuth(authorizationCode)
+        return true
+      }
+    } catch (error) {
+      console.error(`[mcp] Failed to complete OAuth flow for server ${serverUuid}:`, error)
+      this.logs[serverUuid]?.push(`Failed to complete OAuth flow: ${error.message}`)
+    }
+
+    return false
   }
 
 }

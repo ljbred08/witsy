@@ -6,24 +6,28 @@ import { PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
 import Plugin, { PluginConfig } from './plugin'
 import VideoCreator from '../services/video'
 
+export const kVideoPluginName = 'video_generation'
+
 export default class extends Plugin {
 
   creator: VideoCreator
 
-  constructor(config: PluginConfig) {
-    super(config)
+  constructor(config: PluginConfig, workspaceId: string) {
+    super(config, workspaceId)
     this.creator = new VideoCreator()
   }
 
   isEnabled(): boolean {
     return this.config?.enabled && (
-      (this.config.engine == 'replicate' && store.config?.engines.replicate.apiKey?.trim().length > 0) ||
-      (this.config.engine == 'falai' && store.config?.engines.falai.apiKey?.trim().length > 0)
+      (this.config.engine == 'openai' && store.config?.engines?.openai?.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'google' && store.config?.engines?.google?.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'replicate' && store.config?.engines?.replicate?.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'falai' && store.config?.engines?.falai?.apiKey?.trim().length > 0)
     )
   }
 
   getName(): string {
-    return 'video_generation'
+    return kVideoPluginName
   }
 
   getDescription(): string {

@@ -2,34 +2,36 @@
   <div v-if="message.type == 'text'">
     <template v-if="reasoningBlocks.length">
       <div @click="onToggleReasoning" class="toggle-reasoning">
-        <BIconChevronDown v-if="showReasoning" />
-        <BIconChevronRight v-else />
+        <ChevronDownIcon v-if="showReasoning" />
+        <ChevronRightIcon v-else />
         {{ isThinking ? t('message.reasoning.active') : showReasoning ? t('message.reasoning.hide') : t('message.reasoning.show') }}
         <span class="thinking-ellipsis" v-if="isThinking"></span>
       </div>
       <div class="think" v-if="showReasoning">
         <div v-for="block in reasoningBlocks">
-          <MessageItemBodyBlock :block="block" @media-loaded="onMediaLoaded(message)" />
+          <MessageItemBodyBlock :block="block" :transient="message.transient" @media-loaded="onMediaLoaded(message)" />
         </div>
       </div>
     </template>
     <div v-for="block in contentBlocks">
-      <MessageItemBodyBlock :block="block" @media-loaded="onMediaLoaded(message)" />
+      <MessageItemBodyBlock :block="block" :transient="message.transient" @media-loaded="onMediaLoaded(message)" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 
-import { ChatToolMode } from '../types/config'
-import { ref, inject, computed, onMounted, PropType } from 'vue'
-import { store } from '../services/store'
-import { t } from '../services/i18n'
-import { closeOpenMarkdownTags, getCodeBlocks } from '../services/markdown'
-import MessageItemBodyBlock, { Block } from './MessageItemBodyBlock.vue'
-import Message from '../models/message'
-
+import { ChevronDownIcon, ChevronRightIcon } from 'lucide-vue-next'
+import { computed, inject, onMounted, PropType, ref, watch } from 'vue'
 import useEventBus from '../composables/event_bus'
+import Message from '../models/message'
+import { kSearchPluginName } from '../plugins/search'
+import { t } from '../services/i18n'
+import { closeOpenMarkdownTags, getCodeBlocks, isHtmlContent } from '../services/markdown'
+import { store } from '../services/store'
+import { ChatToolMode } from '../types/config'
+import MessageItemBodyBlock, { Block } from './MessageItemBodyBlock.vue'
+
 const { onEvent, emitEvent } = useEventBus()
 
 const showReasoning = inject('showReasoning', ref(store.config.appearance.chat.showReasoning))
@@ -37,6 +39,10 @@ const userToggleReasoning = inject('onToggleReasoning', (value: boolean) => {
   store.config.appearance.chat.showReasoning = value
   store.saveSettings()
 })
+
+const cachedContentBlocks = ref<Block[]>([])
+let isComputing = false
+let needsRecompute = false
 
 const props = defineProps({
   message: {
@@ -58,12 +64,18 @@ const reasoningBlocks = computed((): Block[] => {
 })
 
 const contentBlocks = computed((): Block[] => {
+  
+  // Return cached blocks if available
+  if (cachedContentBlocks.value.length > 0) {
+    return cachedContentBlocks.value
+  }
+
+  // Immediate computation for initial render
   const blocks = computeBlocks(props.message.content)
   if (blocks.length === 0 && !props.message.transient) {
     return [{ type: 'empty' }]
-  } else {
-    return blocks
   }
+  return blocks
 })
 
 const onToggleReasoning = () => {
@@ -72,10 +84,44 @@ const onToggleReasoning = () => {
   emitEvent('toggle-reasoning', showReasoning.value)
 }
 
+const performComputation = async () => {
+  
+  if (isComputing) {
+    needsRecompute = true
+    return
+  }
+
+  isComputing = true
+  needsRecompute = false
+
+  // Use nextTick to ensure this runs asynchronously
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  const blocks = computeBlocks(props.message.content)
+  if (blocks.length === 0 && !props.message.transient) {
+    cachedContentBlocks.value = [{ type: 'empty' }]
+  } else {
+    cachedContentBlocks.value = blocks
+  }
+
+  isComputing = false
+
+  // If content changed during computation, recompute
+  if (needsRecompute) {
+    performComputation()
+  }
+}
+
 onMounted(() => {
+
   onEvent('toggle-reasoning', (value: boolean) => {
     showReasoning.value = value
-  })  
+  })
+
+  watch(() => props.message.content, () => {
+    performComputation()
+  })
+
 })
 
 const emits = defineEmits(['media-loaded'])
@@ -101,6 +147,10 @@ const computeBlocks = (content: string|null): Block[] => {
     content = closeOpenMarkdownTags(content)
   }
 
+  // we always close artifacts because the user may have interrupted
+  // and this is cheap
+  content = closeOpenArtifactTags(content)
+
   // now get the code blocks
   const codeBlocks: { start: number, end: number }[] = getCodeBlocks(content)
 
@@ -108,10 +158,12 @@ const computeBlocks = (content: string|null): Block[] => {
   let lastIndex = 0
   const blocks: Block[] = []
   // Updated regex to exclude images that are inside markdown links [![alt](url)](link)
-  // Negative lookbehind (?<!\[) prevents matching when preceded by '[' 
+  // Negative lookbehind (?<!\[) prevents matching when preceded by '['
   const regexMedia1 = /(?<!\[)!\[([^\]]*)\]\(([^\)]*)\)/g
   const regexMedia2 = /<(?:img|video)[^>]*?src="([^"]*)"[^>]*?>/g
+  const regexArtifact1 = /<artifact.*?title=\"([^\"]*)\".*?>(.*?)<\/artifact>/gms
   const regexTool1 = /<tool (id|index)="([^\"]*)"><\/tool>/g
+  const regexTable1 = /\|(.+)\|[\r\n]+\|[-:\s|]+\|[\r\n]+((?:\|.+\|[\r\n]*)+)/g
 
   while (lastIndex < content.length) {
     
@@ -119,23 +171,33 @@ const computeBlocks = (content: string|null): Block[] => {
     const matches = []
     
     // Reset regex lastIndex to search from current position
-    regexTool1.lastIndex = lastIndex
     regexMedia1.lastIndex = lastIndex
     regexMedia2.lastIndex = lastIndex
-    
-    const tool1Match = regexTool1.exec(content)
+    regexArtifact1.lastIndex = lastIndex
+    regexTool1.lastIndex = lastIndex
+    regexTable1.lastIndex = lastIndex
+
     const media1Match = regexMedia1.exec(content)
     const media2Match = regexMedia2.exec(content)
+    const artifact1Match = regexArtifact1.exec(content)
+    const tool1Match = regexTool1.exec(content)
+    const table1Match = regexTable1.exec(content)
     
     // Collect valid matches (not inside code blocks)
-    if (tool1Match && !codeBlocks.find(block => tool1Match.index >= block.start && tool1Match.index < block.end)) {
-      matches.push({ match: tool1Match, type: 'tool', regex: regexTool1 })
-    }
     if (media1Match && !codeBlocks.find(block => media1Match.index >= block.start && media1Match.index < block.end)) {
       matches.push({ match: media1Match, type: 'media1', regex: regexMedia1 })
     }
     if (media2Match && !codeBlocks.find(block => media2Match.index >= block.start && media2Match.index < block.end)) {
       matches.push({ match: media2Match, type: 'media2', regex: regexMedia2 })
+    }
+    if (artifact1Match && !codeBlocks.find(block => artifact1Match.index >= block.start && artifact1Match.index < block.end)) {
+      matches.push({ match: artifact1Match, type: 'artifact', regex: regexArtifact1 })
+    }
+    if (tool1Match && !codeBlocks.find(block => tool1Match.index >= block.start && tool1Match.index < block.end)) {
+      matches.push({ match: tool1Match, type: 'tool', regex: regexTool1 })
+    }
+    if (table1Match && !codeBlocks.find(block => table1Match.index >= block.start && table1Match.index < block.end)) {
+      matches.push({ match: table1Match, type: 'table', regex: regexTable1 })
     }
     
     // If no matches found, add remaining content as text and break
@@ -168,7 +230,7 @@ const computeBlocks = (content: string|null): Block[] => {
         if (toolCall && toolCall.done) {
           if (props.showToolCalls === 'always') {
             blocks.push({ type: 'tool', toolCall: toolCall })
-          } else if (toolCall.name === 'search_internet') {
+          } else if (toolCall.name === kSearchPluginName) {
             blocks.push({ type: 'search', toolCall: toolCall })
           }
         }
@@ -195,6 +257,20 @@ const computeBlocks = (content: string|null): Block[] => {
       // done
       const desc = match.length === 3 ? match[1] : 'Video'
       blocks.push({ type: 'media', url: imageUrl, desc, prompt })
+    } else if (matchType === 'artifact') {
+      // Check if artifact content is HTML
+      const artifactContent = match[2]
+      const isHtml = isHtmlContent(artifactContent)
+      if (isHtml) {
+        blocks.push({ type: 'html', title: match[1], content: artifactContent })
+      } else {
+        blocks.push({ type: 'artifact', title: match[1], content: artifactContent })
+      }
+    } else if (matchType === 'table') {
+      // Render the markdown table to HTML
+      const tableMarkdown = match[0]
+      const tableHtml = window.api.markdown.render(tableMarkdown)
+      blocks.push({ type: 'table', content: tableHtml })
     }
     
     // Update lastIndex to continue after this match
@@ -205,6 +281,16 @@ const computeBlocks = (content: string|null): Block[] => {
   // done
   //console.log('Computed blocks:', content, blocks)
   return blocks
+}
+
+const closeOpenArtifactTags = (content: string) => {
+
+  const index1 = content.lastIndexOf('<artifact')
+  const index2 = content.lastIndexOf('</artifact>')
+  if (index1 > index2) {
+    content += '</artifact>'
+  }
+  return content
 }
 
 </script>

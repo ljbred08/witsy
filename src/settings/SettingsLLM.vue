@@ -1,7 +1,7 @@
 <template>
   <div class="tab-content" @keyup.escape.prevent="onEditInstruction(null)">
     <header v-if="selectedInstruction">
-      <BIconChevronLeft class="icon back" @click="onEditInstruction(null)" />
+      <ChevronLeftIcon class="icon back" @click="onEditInstruction(null)" />
       <div class="title">{{ t('settings.llm.instructions.editor.title') }}</div>
     </header>
     <header v-else>
@@ -21,23 +21,36 @@
           <option v-for="custom in customInstructions" :key="custom.id" :value="custom.id">{{ custom.label }}</option>
         </select>
         <div class="actions">
-          <button type="button" @click="onCreateInstruction">{{ t('common.add') }}</button>
+          <button type="button" @click="onCreateInstruction">{{ t('common.new') }}</button>
           <button type="button" @click="onEditCurrentInstruction()">{{ t('common.edit') }}</button>
           <button type="button" @click="onDeleteInstruction" :disabled="!isCustomInstructionSelected">{{ t('common.delete') }}</button>
         </div>
+      </div>
+      <div class="form-field capabilities">
+        <label>{{ t('settings.llm.capabilities.title') }}</label>
+          <div class="form-field horizontal">
+            <input type="checkbox" id="artifacts-instructions" v-model="artifactsInstructions" @change="save" />
+            <label for="artifacts-instructions">{{ t('settings.llm.capabilities.artifacts') }}</label>
+          </div>
       </div>
       <div class="form-field quick-prompt">
         <label>{{ t('settings.general.promptLLMModel') }}</label>
         <EngineSelect class="engine" v-model="engine" @change="onChangeEngine" :default-text="t('settings.general.lastOneUsed')" />
         <ModelSelectPlus class="model" v-model="model" @change="onChangeModel" :engine="engine" :default-text="!models.length ? t('settings.general.lastOneUsed') : ''" />
+        <div class="form-subgroup">
+          <div class="form-field horizontal">
+            <input type="checkbox" id="disable-streaming" name="disableStreaming" v-model="disableStreaming" @change="save" />
+            <label for="disable-streaming">{{ t('settings.llm.disableStreaming') }}</label>
+          </div>
+        </div>
       </div>
       <div class="form-field localeLLM">
         <label>{{ t('settings.general.localeLLM') }}</label>
         <div class="form-subgroup">
           <LangSelect v-model="localeLLM" @change="onChangeLocaleLLM" />
           <div class="form-field horizontal">
-            <input type="checkbox" v-model="forceLocale" :disabled="!isLocalized" @change="save" />
-            <div class="label">{{ t('settings.general.forceLocale') }}</div>
+            <input type="checkbox" id="force-locale" v-model="forceLocale" :disabled="!isLocalized" @change="save" />
+            <label for="force-locale">{{ t('settings.general.forceLocale') }}</label>
           </div>
         </div>
       </div>
@@ -54,24 +67,27 @@
 
 <script setup lang="ts">
 
-import { InstructionsType, CustomInstruction } from '../types/config'
-import { ref, computed } from 'vue'
-import { store } from '../services/store'
-import { hasLocalization, t, i18nInstructions } from '../services/i18n'
+import { ChevronLeftIcon } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
 import EngineSelect from '../components/EngineSelect.vue'
-import ModelSelectPlus from '../components/ModelSelectPlus.vue'
-import LangSelect from '../components/LangSelect.vue'
 import InstructionEditor from '../components/InstructionEditor.vue'
+import LangSelect from '../components/LangSelect.vue'
+import ModelSelectPlus from '../components/ModelSelectPlus.vue'
 import Dialog from '../composables/dialog'
+import { hasLocalization, i18nInstructions, t } from '../services/i18n'
+import { store } from '../services/store'
+import { InstructionsType } from '../types/config'
+import { CustomInstruction } from '../types/index'
 
-const isMas = ref(false)
 const instructions = ref<InstructionsType>('structured')
 const engine = ref(null)
 const model = ref(null)
+const disableStreaming = ref(false)
 const localeLLM = ref(null)
 const isLocalized = ref(false)
 const forceLocale = ref(false)
 const conversationLength = ref(null)
+const artifactsInstructions = ref(false)
 const customInstructions = ref<CustomInstruction[]>([])
 const selectedInstruction = ref<CustomInstruction | null>(null)
 
@@ -100,12 +116,13 @@ const getDefaultInstructionLabel = (instructionType: string) => {
 }
 
 const load = () => {
-  isMas.value = window.api.isMasBuild
   instructions.value = store.config.llm.instructions || 'structured'
   engine.value = store.config.prompt.engine || ''
   model.value = store.config.prompt.model || ''
+  disableStreaming.value = store.config.prompt.disableStreaming
   localeLLM.value = store.config.llm.locale
   forceLocale.value = store.config.llm.forceLocale
+  artifactsInstructions.value = store.config.llm.additionalInstructions.artifacts
   conversationLength.value = store.config.llm.conversationLength || 5
   customInstructions.value = store.config.llm.customInstructions || []
   onChangeLocaleLLM()
@@ -115,8 +132,10 @@ const save = () => {
   store.config.llm.instructions = instructions.value
   store.config.prompt.engine = engine.value
   store.config.prompt.model = model.value
+  store.config.prompt.disableStreaming = disableStreaming.value
   store.config.llm.locale = localeLLM.value
   store.config.llm.forceLocale = forceLocale.value
+  store.config.llm.additionalInstructions.artifacts = artifactsInstructions.value
   store.config.llm.conversationLength = conversationLength.value
   store.config.llm.customInstructions = customInstructions.value
   store.saveSettings()
@@ -142,7 +161,7 @@ const onChangeLocaleLLM = () => {
 }
 
 const getSelectedCustomInstruction = () => {
-  return customInstructions.value.find(ci => ci.id === instructions.value) || null
+  return customInstructions.value.find((ci: CustomInstruction) => ci.id === instructions.value) || null
 }
 
 const onCreateInstruction = () => {
@@ -187,7 +206,7 @@ const onDeleteInstruction = async () => {
   })
   
   if (result.isConfirmed) {
-    const index = customInstructions.value.findIndex(ci => ci.id === instructions.value)
+    const index = customInstructions.value.findIndex((ci: CustomInstruction) => ci.id === instructions.value)
     if (index >= 0) {
       customInstructions.value.splice(index, 1)
       instructions.value = 'structured'
@@ -218,7 +237,7 @@ const onInstructionSaved = (instruction: CustomInstruction) => {
     }, store.config as any)
   } else {
     // Saving a custom instruction
-    const existingIndex = customInstructions.value.findIndex(ci => ci.id === instruction.id)
+    const existingIndex = customInstructions.value.findIndex((ci: CustomInstruction) => ci.id === instruction.id)
     
     if (existingIndex >= 0) {
       customInstructions.value[existingIndex] = instruction

@@ -2,6 +2,7 @@
 import { vi, beforeAll, beforeEach, expect, test } from 'vitest'
 import { useWindowMock, listeners } from '../mocks/window'
 import { store } from '../../src/services/store'
+import { DEFAULT_WORKSPACE_ID } from '../../src/main/workspace'
 import Chat from '../../src/models/chat'
 import Message from '../../src/models/message'
 import defaultSettings from '../../defaults/settings.json'
@@ -63,7 +64,7 @@ test('Load', async () => {
   expect(store.history.folders).toHaveLength(0)
   expect(store.history.chats).toHaveLength(2)
   expect(store.commands).toHaveLength(5)
-  expect(store.experts).toHaveLength(3)
+  expect(store.experts).toHaveLength(4)
 })
 
 test('Save settings', async () => {
@@ -98,7 +99,7 @@ test('Load history', async () => {
 test('Save history', async () => {
   store.saveHistory()
   expect(window.api.history?.save).toHaveBeenCalled()
-  expect(window.api.history?.save).toHaveBeenLastCalledWith({
+  expect(window.api.history?.save).toHaveBeenLastCalledWith(DEFAULT_WORKSPACE_ID, {
     folders: [],
     chats: [ {
       uuid: '123',
@@ -111,11 +112,11 @@ test('Save history', async () => {
       messages: [
         {
           uuid: '1', engine: null, model: null, createdAt: 0, role: 'system', type: 'text', content: 'Hi', reasoning: null,
-          deepResearch: false, toolCalls: [], attachments: [], transient: false, uiOnly: false
+          execType: 'prompt', toolCalls: [], attachments: [], transient: false, uiOnly: false
         },
         {
           uuid: '2', engine: 'engine', model: 'model', createdAt: 0, role: 'user', type: 'text', content: 'Hello', reasoning: null,
-          deepResearch: false, toolCalls: [], attachments: [], transient: false, uiOnly: false
+          execType: 'prompt', toolCalls: [], attachments: [], transient: false, uiOnly: false
         }
       ]
     } ],

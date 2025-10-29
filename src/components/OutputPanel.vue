@@ -3,25 +3,25 @@
     <MessageItem :message="message" :show-role="false" :show-actions="false" />
     <div class="actions">
       <MessageItemActionCopy :message="message" ref="actionCopy" />
-      <div class="action insert" v-if="!isMas && !message.transient" @click="onInsert">
-        <BIconArrowReturnLeft /> {{ t('common.insert') }}
+      <div class="action insert" v-if="!message.transient" @click="onInsert">
+        <CornerDownLeftIcon /> {{ t('common.insert') }}
       </div>
-      <div class="action replace" v-if="!isMas && showReplace && !message.transient" @click="onReplace">
-        <BIconArrowLeftRight /> {{ t('common.replace') }}
+      <div class="action replace" v-if="showReplace && !message.transient" @click="onReplace">
+        <ArrowLeftRightIcon /> {{ t('common.replace') }}
       </div>
       <MessageItemActionRead :message="message" :audio-state="audioState" :read-aloud="onReadAloud" />
       <div class="action continue" v-if="!message.transient" @click="onChat">
-        <BIconChatSquare /> {{ t('common.chat') }}
+        <MessageSquareIcon /> {{ t('common.chat') }}
       </div>
       <div class="action scratchpad" v-if="!message.transient" @click="onScratchPad">
-        <BIconPen /> {{ t('common.write') }}
+        <PenIcon /> {{ t('common.write') }}
       </div>
       <div class="action retry" v-if="!message.transient" @click="onRetry(message)">
-        <BIconArrowCounterclockwise /> {{ t('common.retry') }}
+        <RotateCcwIcon /> {{ t('common.retry') }}
       </div>
       <div class="action spacer" />
       <div class="action clear" @click="onClear" v-if="showClear">
-        <BIconXCircle /> {{ t('common.clear') }}
+        <XCircleIcon /> {{ t('common.clear') }}
       </div>
       <div class="action close" @click="onClose">
         <span class="narrow">{{ t('common.esc') }}</span> {{ t('common.close') }}
@@ -33,24 +33,24 @@
 
 <script setup lang="ts">
 
-import { Application } from '../types/automation'
-import { ref, onMounted, onUnmounted, PropType } from 'vue'
-import { store } from '../services/store'
-import { t } from '../services/i18n'
-import useAudioPlayer, { AudioStatus } from '../composables/audio_player'
+import { ArrowLeftRightIcon, CornerDownLeftIcon, MessageSquareIcon, PenIcon, RotateCcwIcon, XCircleIcon } from 'lucide-vue-next'
+import { onMounted, onUnmounted, PropType, ref } from 'vue'
 import MessageItem from '../components/MessageItem.vue'
 import MessageItemActionCopy from '../components/MessageItemActionCopy.vue'
 import MessageItemActionRead from '../components/MessageItemActionRead.vue'
-import Message from '../models/message'
+import useAudioPlayer, { AudioStatus } from '../composables/audio_player'
 import Dialog from '../composables/dialog'
-
 import useEventBus from '../composables/event_bus'
+import Message from '../models/message'
+import { t } from '../services/i18n'
+import { store } from '../services/store'
+import { Application } from '../types/automation'
+
 const { onEvent } = useEventBus()
 
 // init stuff
 const audioPlayer = useAudioPlayer(store.config)
 
-const isMas = ref(false)
 const actionCopy = ref(null)
 const audio = ref(null)
 const audioState = ref({
@@ -93,9 +93,6 @@ onMounted(() => {
   // audio listener init
   audioPlayer.addListener(onAudioPlayerStatus)
   onEvent('audio-noise-detected', () =>  audioPlayer.stop)
-
-  // other stuff
-  isMas.value = window.api.isMasBuild
 
 })
 
@@ -233,7 +230,7 @@ defineExpose({
     .transient {
       margin-left: 4px;
       .tool-call {
-        font-size: 12pt !important;
+        font-size: 16px !important;
       }
     }
   }
@@ -270,7 +267,7 @@ defineExpose({
     padding: 8px 24px 8px 0px;
     padding-bottom: 2px;
     color: var(--icon-color);
-    font-size: 10pt;
+    font-size: 13.5px;
 
     .action {
       display: flex;

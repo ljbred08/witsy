@@ -1,41 +1,89 @@
 <template>
-  <div class="main">
-    <MenuBar :mode="mode" @change="onMode" @new-chat="onNewChat" @run-onboarding="onRunOnboarding" />
-    <Settings :style="{ display: mode === 'settings' ? 'flex' : 'none' }" :extra="viewParams" />
-    <Chat ref="chat" :style="{ display: mode === 'chat' ? 'flex' : 'none' }" :extra="viewParams" />
-    <DesignStudio :style="{ display: mode === 'studio' ? 'flex' : 'none' }" />
-    <DocRepos v-if="mode === 'docrepo'" />
-    <AgentForge v-if="mode === 'agents'" ref="agents" />
-    <RealtimeChat v-if="mode === 'voice-mode'" ref="realtime" />
-    <Transcribe v-if="mode === 'dictation'" ref="transcribe" />
+  <div class="main-window window">
+
+    <header />
+
+    <main>
+      
+      <MenuBar :mode="mode" @change="onMode" @new-chat="onNewChat" @run-onboarding="onRunOnboarding" />
+      
+      <Chat ref="chat" :style="{ display: mode === 'chat' ? undefined : 'none' }" :extra="viewParams" />
+      <DesignStudio :style="{ display: mode === 'studio' ? undefined : 'none' }" />
+      <RealtimeChat v-if="mode === 'voice-mode'" ref="realtime" />
+      <Transcribe v-if="mode === 'dictation'" ref="transcribe" />
+    
+      <AgentForge v-if="mode === 'agents'" />
+      <McpServers v-if="mode === 'mcp'" />
+      <DocRepos v-if="mode === 'docrepos'" />
+
+      <!-- WebApp viewers - lazy loaded and kept mounted for session persistence -->
+      <WebAppViewer
+        v-for="webapp in loadedWebapps"
+        :key="webapp.id"
+        :webapp="webapp"
+        :visible="mode === `webapp-${webapp.id}`"
+        @update-last-used="updateLastUsed(webapp.id)"
+        @navigate="onNavigate(webapp.id, $event)"
+      />
+
+      <ScratchPad :style="{
+        display: mode === 'scratchpad' ? undefined : 'none',
+        pointerEvents: mode == 'scratchpad' ? undefined : 'none'
+      }" :extra="viewParams" ref="scratchpad" />
+
+      <Settings :style="{
+        display: mode === 'settings' ? undefined : 'none',
+        pointerEvents: mode == 'settings' ? undefined : 'none'
+      }" :extra="viewParams" ref="settings" />
+
+      <Onboarding v-if="showOnboarding" @close="onOnboardingDone" />
+    
+    </main>
+    
+    <footer>
+      <label>{{ t('common.appName') }} v{{ version }}</label>
+      <div class="actions">
+        <ActivityIcon @click="onMode('debug')"/>
+        <!-- <CommandIcon />
+        <CircleQuestionMarkIcon /> -->
+      </div>
+    </footer>
+  
   </div>
-  <Onboarding v-if="onboard" @close="onOnboardingDone" />
   <Fullscreen window="main" />
 </template>
 
 <script setup lang="ts">
 
-import { anyDict } from '../types/index'
-import { ref, onMounted, nextTick } from 'vue'
-import { store } from '../services/store'
+import { ActivityIcon } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import Fullscreen from '../components/Fullscreen.vue'
 import MenuBar, { MenuBarMode } from '../components/MenuBar.vue'
+import useEventBus from '../composables/event_bus'
+import useWebappManager from '../composables/webapp_manager'
+import AgentForge from '../screens/AgentForge.vue'
 import Chat from '../screens/Chat.vue'
 import DesignStudio from '../screens/DesignStudio.vue'
 import DocRepos from '../screens/DocRepos.vue'
-import AgentForge from '../screens/AgentForge.vue'
-import Settings from '../screens/Settings.vue'
-import RealtimeChat from '../screens/RealtimeChat.vue'
-import Transcribe from '../screens/Transcribe.vue'
+import McpServers from '../screens/McpServers.vue'
 import Onboarding from '../screens/Onboarding.vue'
-import Fullscreen from '../components/Fullscreen.vue'
+import RealtimeChat from '../screens/RealtimeChat.vue'
+import ScratchPad from '../screens/ScratchPad.vue'
+import Settings from '../screens/Settings.vue'
+import Transcribe from '../screens/Transcribe.vue'
+import WebAppViewer from '../screens/WebAppViewer.vue'
+import { t } from '../services/i18n'
+import { store } from '../services/store'
+import { anyDict } from '../types/index'
 
-import useEventBus from '../composables/event_bus'
 const { emitEvent, onEvent } = useEventBus()
+const { loadedWebapps, loadWebapp, updateLastUsed, onNavigate, setupEviction, cleanup } = useWebappManager()
 
 const chat = ref<typeof Chat>(null)
 const transcribe = ref<typeof Transcribe>(null)
 const realtime = ref<typeof RealtimeChat>(null)
-const onboard = ref(false)
+const settings = ref<typeof Settings>(null)
+const showOnboarding = ref(false)
 
 // init stuff
 store.load()
@@ -46,6 +94,10 @@ const props = defineProps({
 
 const mode = ref<MenuBarMode>('chat')
 const viewParams = ref(null)
+
+const version = computed(() => {
+  return window.api.app.getVersion()
+})
 
 onMounted(() => {
 
@@ -76,12 +128,17 @@ onMounted(() => {
   // show onboarding when window opens
   window.api.on('window-opened', () => {
     if (!store.config.general.onboardingDone) {
-      setTimeout(() => onboard.value = true, 500)
+      setTimeout(() => showOnboarding.value = true, 500)
     }
   })
 
   // show it again
   window.api.on('run-onboarding', onRunOnboarding)
+
+  // Setup webapp eviction interval if feature is enabled
+  if (store.isFeatureEnabled('webapps')) {
+    setupEviction()
+  }
 
 })
 
@@ -94,23 +151,33 @@ const processQueryParams = (params: anyDict) => {
     viewParams.value = params
 
     // special
-    if (params.view === 'docrepo') {
+    if (params.view === 'docrepos') {
       emitEvent('create-docrepo')
     }
 
+  } else if (mode.value === 'none') {
+    onMode('chat')
   }
 }
+
+// Cleanup on unmount
+onBeforeUnmount(() => {
+  cleanup()
+})
 
 const onMode = async (next: MenuBarMode) => {
 
   //console.log('[main] onMode', next)
 
-  if (next === 'scratchpad') {
-    window.api.scratchpad.open()
-  } else if (next === 'computer-use') {
+  if (next === 'computer-use') {
     mode.value = 'chat'
   } else if (next === 'debug') {
     window.api.debug.showConsole()
+  } else if (typeof next === 'string' && next.startsWith('webapp-')) {
+    // Handle webapp mode
+    const webappId = next.replace('webapp-', '')
+    loadWebapp(webappId)
+    mode.value = next
   } else {
     mode.value = next
   }
@@ -120,7 +187,7 @@ const onMode = async (next: MenuBarMode) => {
   emitEvent('main-view-changed', next)
 
   // for menu update
-  if (mode.value !== 'computer-use' && mode.value !== 'scratchpad' && mode.value !== 'debug') {
+  if (mode.value !== 'computer-use' && mode.value !== 'debug') {
     window.api.main.updateMode(mode.value)
   }
 
@@ -142,13 +209,13 @@ const onNewChat = () => {
 }
 
 const onRunOnboarding = () => {
-  onboard.value = true
+  showOnboarding.value = true
   store.config.general.onboardingDone = false
   store.saveSettings()
 }
 
 const onOnboardingDone = () => {
-  onboard.value = false
+  showOnboarding.value = false
   store.config.general.onboardingDone = true
   store.saveSettings()
 }
@@ -160,12 +227,13 @@ const onOnboardingDone = () => {
 @import '../../css/swal2.css';
 </style>
 
-<style scoped>
+<style>
 
-.main {
-  display: flex;
-  flex-direction: row;
-  height: 100vh;
+/* hack! */
+.main-window:has(~ .fullscreen-drawer.visible) {
+  main .settings * {
+    z-index: -1 !important;
+  }
 }
 
 </style>

@@ -1,9 +1,9 @@
 <template>
-  <div class="form tab-content form-large">
+  <div class="tab-content">
     <header>
       <div class="title">{{ t('settings.tabs.shortcuts') }}</div>
     </header>
-    <main>
+    <main class="form form-large">
       <div class="form-field">
         <label>{{ t('settings.shortcuts.mainWindow') }}</label>
         <InputShortcut v-model="chat" @change="save "/>
@@ -42,6 +42,10 @@
         <label>{{ t('settings.shortcuts.voiceMode') }}</label>
         <InputShortcut v-model="realtime" @change="save" />
       </div>
+      <div class="form-field">
+        <label></label>
+        <button class="clear-all" @click="clearAll">{{ t('settings.shortcuts.clearAll') }}</button>
+      </div>
     </main>
   </div>
 </template>
@@ -73,6 +77,18 @@ const load = () => {
   studio.value = store.config.shortcuts.studio
 }
 
+const clearAll = () => {
+  prompt.value = null
+  chat.value = null
+  scratchpad.value = null
+  command.value = null
+  readaloud.value = null
+  transcribe.value = null
+  realtime.value = null
+  studio.value = null
+  save()
+}
+
 const save = () => {
   store.config.shortcuts.prompt = prompt.value
   store.config.shortcuts.main = chat.value
@@ -93,7 +109,7 @@ defineExpose({ load })
 
 <style scoped>
 
-.form.tab-content:deep() main {
+.tab-content:deep() {
 
   --label-width: 190px;
   
@@ -117,6 +133,22 @@ defineExpose({ load })
     }
     label + * {
       width: 150px !important;
+    }
+
+    .form-subgroup {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    button {
+      padding: 6px 1rem;
+    }
+
+    button.clear-all {
+      width: auto !important;
+      padding: 0.5rem 0.75rem;
+      white-space: nowrap;
     }
   }
 }

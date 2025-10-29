@@ -1,0 +1,57 @@
+{
+  "folders": [
+    {
+      "id": "1",
+      "name": "Folder 1",
+      "defaults": {
+        "engine": "openai",
+        "model": "model1",
+        "prompt": "instructions",
+        "temperature": 0.7,
+        "maxTokens": 1024,
+        "verbosity": "detailed",
+        "reasoningBudget": 5,
+        "thinkingBudget": 10,
+        "customOpts": {
+          "key1": "value1",
+          "key2": "value2"
+        }
+      },
+      "chats": [
+        "1",
+        "2"
+      ]
+    },
+    {
+      "id": "2",
+      "name": "Folder 2",
+      "chats": [
+        "3"
+      ]
+    }
+  ],
+  "chats": [
+    {
+      "uuid": "1",
+      "title": "Chat 1",
+      "messages": [
+        {},
+        {}
+      ]
+    },
+    {
+      "uuid": "2",
+      "title": "Chat 2",
+      "messages": [
+        {}
+      ]
+    },
+    {
+      "uuid": "3",
+      "title": "Chat 3",
+      "messages": [
+        {}
+      ]
+    }
+  ]
+}

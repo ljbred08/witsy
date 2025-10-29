@@ -1,7 +1,8 @@
 
 import { vi } from 'vitest'
 import { renderMarkdown } from '../../src/main/markdown'
-import { AgentRun, AgentRunStatus, AgentRunTrigger, Command, Expert } from '../../src/types/index'
+import { Command, Expert, ExpertCategory } from '../../src/types/index'
+import { AgentRun, AgentRunStatus, AgentRunTrigger } from '../../src/types/agents'
 import { McpInstallStatus } from '../../src/types/mcp'
 import { ListDirectoryResponse } from '../../src/types/filesystem'
 import { FilePickParams } from '../../src/types/file'
@@ -16,6 +17,7 @@ interface WindowMockOpts {
   modelDefaults?: boolean
   favoriteModels?: boolean
   customEngine?: boolean
+  noAdditionalInstructions?: boolean
 }
 
 let clipboard = ''
@@ -42,17 +44,22 @@ const useWindowMock = (opts?: WindowMockOpts) => {
     on: vi.fn((signal, listener) => listeners.push(listener)),
     off: vi.fn(),
     app: {
+      getVersion: vi.fn(() => '0.1.0'),
       setAppearanceTheme: vi.fn(),
       showAbout: vi.fn(),
       // showDialog: vi.fn(async () => { return { response: opts.dialogResponse || 0, checkboxChecked: false }}),
       getAssetPath: vi.fn(() => ''),
       listFonts: vi.fn(() => []),
       fullscreen: vi.fn(),
+      getHttpPort: vi.fn(() => 8090),
     },
     main: {
       updateMode: vi.fn(),
       setContextMenuContext: vi.fn(),
       close: vi.fn(),
+      showWindowButtons: vi.fn(),
+      hideWindowButtons: vi.fn(),
+      moveWindow: vi.fn(),
     },
     debug: {
       showConsole: vi.fn(),
@@ -87,19 +94,29 @@ const useWindowMock = (opts?: WindowMockOpts) => {
             { id: 'mock-vision', engine: 'mock', model: 'vision' },
           ]
         }
+        if (opts.noAdditionalInstructions) {
+          for (const key of Object.keys(config.llm.additionalInstructions)) {
+            config.llm.additionalInstructions[key] = false
+          }
+        }
         if (opts.modelDefaults) {
           config.llm.defaults = [
             {
               engine: 'mock',
               model: 'chat',
               disableStreaming: false,
+              instructions: 'Test instructions',
               tools: [],
-              contextWindowSize: 512,
-              maxTokens: 150,
-              temperature: 0.7,
-              top_k: 10,
-              top_p: 0.5,
-              reasoning: true,
+              expert: 'expert1',
+              docrepo: 'repo1',
+              modelOpts: {
+                contextWindowSize: 512,
+                maxTokens: 150,
+                temperature: 0.7,
+                top_k: 10,
+                top_p: 0.5,
+                reasoning: true,
+              }
             },
           ]
         }
@@ -168,10 +185,16 @@ const useWindowMock = (opts?: WindowMockOpts) => {
     experts: {
       load: vi.fn(() => [
         { id: 'uuid1', type: 'system', state: 'enabled' },
-        { id: 'uuid2', type: 'system', name: 'actor2', prompt: 'prompt2', state: 'disabled' },
-        { id: 'uuid3', type: 'user', name: 'actor3', prompt: 'prompt3', state: 'enabled', triggerApps: [ { identifier: 'app' }] }
+        { id: 'uuid2', type: 'system', categoryId: 'cat-1', name: 'actor2', prompt: 'prompt2', state: 'disabled' },
+        { id: 'uuid3', type: 'user', categoryId: 'cat-1', name: 'actor3', prompt: 'prompt3', state: 'enabled', triggerApps: [ { identifier: 'app' }] },
+        { id: 'uuid4', type: 'user', categoryId: 'cat-2', name: 'actor4', prompt: 'prompt4', state: 'enabled', engine: 'anthropic', model: 'claude-3-sonnet', triggerApps: [] }
       ] as Expert[]),
       save: vi.fn(),
+      loadCategories: vi.fn(() => [
+        { id: 'cat-1', type: 'system', state: 'enabled', icon: 'Code2', color: 'text-green-500' },
+        { id: 'cat-2', type: 'system', state: 'enabled', icon: 'Briefcase', color: 'text-purple-500' }
+      ] as ExpertCategory[]),
+      saveCategories: vi.fn(),
       import: vi.fn(),
       export: vi.fn(),
     },
@@ -261,7 +284,7 @@ const useWindowMock = (opts?: WindowMockOpts) => {
       ]),
       save: vi.fn(),
       delete: vi.fn(),
-      getRuns: vi.fn((agentId: string) => {
+      getRuns: vi.fn((workspaceId: string, agentId: string) => {
         if (agentId === 'agent1') {
           return [
             {
@@ -314,13 +337,15 @@ const useWindowMock = (opts?: WindowMockOpts) => {
         }
         return []
       }),
-      getRun: vi.fn((agentId: string, runId: string) => {
-        const runs = window.api?.agents?.getRuns(agentId) || []
+      getRun: vi.fn((workspaceId: string, agentId: string, runId: string) => {
+        const runs = window.api?.agents?.getRuns(workspaceId, agentId) || []
         return runs.find((run: AgentRun) => run.uuid === runId) || null
       }),
       saveRun: vi.fn(),
       deleteRuns: vi.fn(),
       deleteRun: vi.fn(),
+      getApiBasePath: vi.fn(() => '/api/agent'),
+      generateWebhookToken: vi.fn(() => 'webhook-token'),
     },
     history: {
       load: vi.fn(() => ({ folders: [ ], chats: [ ], quickPrompts: [ ] })),
@@ -381,14 +406,14 @@ const useWindowMock = (opts?: WindowMockOpts) => {
     },
     docrepo: {
       open: vi.fn(),
-      list: vi.fn((): DocumentBase[] => {
+      list: vi.fn((workspaceId: string): DocumentBase[] => {
         return [
-          { uuid: 'uuid1', name: 'docrepo1', embeddingEngine: 'ollama', embeddingModel: 'all-minilm', documents: [] },
-          { uuid: 'uuid2', name: 'docrepo2', embeddingEngine: 'openai', embeddingModel: 'text-embedding-ada-002', documents: [
-            { uuid: 'uuid3', type: 'file', title: 'file1', origin: '/tmp/file1', filename: 'file1', url: 'file:///tmp/file1', lastModified: 0, fileSize: 0 },
+          { uuid: 'uuid1', name: 'docrepo1', embeddingEngine: 'ollama', embeddingModel: 'all-minilm', workspaceId: workspaceId, documents: [] },
+          { uuid: 'uuid2', name: 'docrepo2', embeddingEngine: 'openai', embeddingModel: 'text-embedding-ada-002', workspaceId: workspaceId, documents: [
+            { uuid: 'uuid3', type: 'file', title: 'file1', origin: '/tmp/file1', filename: 'file1', url: 'file:///tmp/file1', lastModified: 0, fileSize: 1 },
             { uuid: 'uuid4', type: 'folder', title: 'folder1', origin: '/tmp/folder1', filename: 'folder1', url: 'file:///tmp/folder1', lastModified: 0, fileSize: 0, items: [
-              { uuid: 'uuid5', type: 'file', title: 'file2', origin: '/tmp/file2', filename: 'file2', url: 'file:///tmp/file2', lastModified: 0, fileSize: 0 },
-              { uuid: 'uuid6', type: 'file', title: 'file3', origin: '/tmp/file3', filename: 'file3', url: 'file:///tmp/file3', lastModified: 0, fileSize: 0 },
+              { uuid: 'uuid5', type: 'file', title: 'file2', origin: '/tmp/file2', filename: 'file2', url: 'file:///tmp/file2', lastModified: 0, fileSize: 2 },
+              { uuid: 'uuid6', type: 'file', title: 'file3', origin: '/tmp/file3', filename: 'file3', url: 'file:///tmp/file3', lastModified: 0, fileSize: 3 },
             ]},
           ]},
         ]
@@ -397,10 +422,10 @@ const useWindowMock = (opts?: WindowMockOpts) => {
       connect: vi.fn(() => true),
       disconnect: vi.fn(() => true),
       create: vi.fn(),
-      rename: vi.fn(),
+      update: vi.fn(),
       delete: vi.fn(),
-      addDocument: vi.fn(),
-      removeDocument: vi.fn(),
+      addDocument: vi.fn(async () => {}),
+      removeDocument: vi.fn(async () => true),
       query: vi.fn(async () => [
         {
           content: 'content',
@@ -415,10 +440,29 @@ const useWindowMock = (opts?: WindowMockOpts) => {
           }
         } as DocRepoQueryResponseItem
       ]),
-      getCurrentQueueItem: vi.fn(async () => null)
+      getCurrentQueueItem: vi.fn(async () => null),
+      isSourceSupported: vi.fn((type: string, origin: string) => origin.startsWith('file'))
     },
     scratchpad: {
       open: vi.fn(),
+      list: vi.fn(() => [
+        { uuid: 'scratchpad1', title: 'Test Scratchpad 1', lastModified: Date.now() - 3600000 },
+        { uuid: 'scratchpad2', title: 'Test Scratchpad 2', lastModified: Date.now() - 7200000 },
+      ]),
+      load: vi.fn((workspaceId: string, uuid: string) => ({
+        uuid,
+        title: 'Test Scratchpad',
+        contents: { content: 'Test content' },
+        chat: null,
+        undoStack: [],
+        redoStack: [],
+        createdAt: Date.now() - 86400000,
+        lastModified: Date.now() - 3600000
+      })),
+      save: vi.fn(() => true),
+      rename: vi.fn(() => true),
+      delete: vi.fn(() => true),
+      import: vi.fn(() => 'new-uuid'),
     },
     mcp: {
       isAvailable: vi.fn(() => true),
@@ -438,9 +482,26 @@ const useWindowMock = (opts?: WindowMockOpts) => {
       getStatus: vi.fn(() => ({ servers: [
         { uuid: '1', registryId: '1', state: 'enabled', type: 'stdio', command: 'node', url: 'script.js', tools: [ 'tool1', 'tool2' ] },
         { uuid: '2', registryId: '2', state: 'enabled', type: 'sse', url: 'http://localhost:3000', tools: [ 'tool3', 'tool4' ] },
+        { uuid: '3', registryId: '3', state: 'enabled', type: 'stdio', command: 'python3', url: 'script.py', tools: null },
       ], logs: {} })),
+      getAllServersWithTools: vi.fn(async () => [
+        {
+          uuid: '1', registryId: '1', state: 'enabled' as const, type: 'stdio' as const, command: 'node', url: 'script.js', toolSelection: null,
+          tools: [
+            { uuid: 'tool1_1', name: 'tool1', description: 'description1' },
+            { uuid: 'tool2_1', name: 'tool2', description: 'description2' }
+          ]
+        },
+        {
+          uuid: '2', registryId: '2', state: 'enabled' as const, type: 'sse' as const, url: 'http://localhost:3000', toolSelection: null,
+          tools: [
+            { uuid: 'tool3_2', name: 'tool3', description: 'description3' },
+            { uuid: 'tool4_2', name: 'tool4', description: 'description4' }
+          ]
+        }
+      ]),
       //@ts-expect-error not sure about the type: 'function' complain
-      getTools: vi.fn(async () => [
+      getLlmTools: vi.fn(async () => [
         { type: 'function', function: { name: 'tool1' , description: 'description1', parameters: { type: 'object', properties: {}, required: [] } } },
         { type: 'function', function: { name: 'tool2' , description: 'description2', parameters: { type: 'object', properties: {}, required: [] } } },
       ]),
@@ -448,6 +509,8 @@ const useWindowMock = (opts?: WindowMockOpts) => {
         content: [ { text: 'result2' } ],
       } : { result: 'result' })),
       originalToolName: vi.fn((name: string) => name),
+      detectOAuth: vi.fn(async () => ({ requiresOAuth: false })),
+      startOAuthFlow: vi.fn(async () => JSON.stringify({ tokens: {}, clientInformation: {}, clientMetadata: {} })),
     },
     anywhere: {
       prompt: vi.fn(),
@@ -456,7 +519,11 @@ const useWindowMock = (opts?: WindowMockOpts) => {
       resize: vi.fn(),
     },
     interpreter: {
-      python: vi.fn(async () => ({ result: ['bonjour'] }))
+      python: vi.fn(async () => ({ result: ['bonjour'] })),
+      pyodide: vi.fn(async () => ({ result: 'bonjour' })),
+      downloadPyodide: vi.fn(async () => ({ success: true })),
+      isPyodideCached: vi.fn(async () => false),
+      clearPyodideCache: vi.fn(async () => {}),
     },
     markdown: {
       render: vi.fn(renderMarkdown),
@@ -491,14 +558,26 @@ const useWindowMock = (opts?: WindowMockOpts) => {
       delete: vi.fn(),
     },
     search: {
-      query: vi.fn(async () => [
+      query: vi.fn(async () => ({ results: [
         { title: 'title1', url: 'url1', content: '<html>page_content1<img src="test" /></html>' },
         { title: 'title2', url: 'url2', content: '<html>header<main id="main">page_content2</main></html>' },
-      ])
+      ]})),
+      cancel: vi.fn(),
+      test: vi.fn(),
     },
     backup: {
       export: vi.fn(() => true),
       import: vi.fn(() => true),
+    },
+    workspace: {
+      list: vi.fn(() => []),
+      load: vi.fn(() => null),
+      save: vi.fn(() => true),
+      delete: vi.fn(() => true),
+    },
+    webview: {
+      setLinkBehavior: vi.fn(async () => {}),
+      setSpellCheckEnabled: vi.fn(async () => {}),
     }
   }
 

@@ -1,7 +1,7 @@
 .tooltip-directive {
   position: absolute;
   z-index: 1000;
-  font-size: 10pt !important;
+  font-size: 13.5px !important;
   font-weight: normal !important;
   font-style: normal !important;
   background: var(--text-color);
@@ -15,12 +15,12 @@
 }
 
 .tooltip-directive.right {
-  top: 0px;
+  top: 0;
   left: calc(100% + 0.5rem);
 }
 
 .tooltip-directive.left {
-  top: 0px;
+  top: -50%;
   right: calc(100% + 0.5rem);
 }
 
@@ -40,7 +40,7 @@
   left: -0.5rem;
 }
 
-.tooltip-directive.bottom {
+.tooltip-directive.bottom, .tooltip-directive.below {
   top: calc(100% + 0.5rem);
   left: 50%;
   transform: translateX(-50%);
@@ -99,7 +99,7 @@
   border-color: var(--text-color) transparent transparent transparent;
 }
 
-.tooltip-directive.bottom .arrow {
+.tooltip-directive.bottom .arrow, .tooltip-directive.below .arrow {
   bottom: 100%;
   left: 50%;
   margin-left: -5px;

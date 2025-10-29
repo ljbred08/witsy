@@ -1,7 +1,9 @@
 
 {
+  "workspaceId": "00000000-0000-0000-0000-000000000000",
   "general": {
     "firstRun": true,
+    "safeKeys": true,
     "onboardingDone": false,
     "keepRunning": true,
     "hideOnStartup": false,
@@ -12,7 +14,9 @@
     "confirm": {
       "retryGeneration": true
     },
-    "locale": ""
+    "locale": "",
+    "webappEvictionMinutes": 30,
+    "enableHttpEndpoints": true
   },
   "llm": {
     "locale": "",
@@ -24,7 +28,13 @@
     "conversationLength": 20,
     "imageResize": 768,
     "defaults": [],
-    "customInstructions": []
+    "customInstructions": [],
+    "additionalInstructions": {
+      "toolRetry": true,
+      "datetime": true,
+      "mermaid": true,
+      "artifacts": true
+    }
   },
   "deepresearch": {
     "runtime": "ms",
@@ -41,6 +51,10 @@
       "layout": "normal"
     },
     "chat": {
+      "autoPreview": {
+        "html": true
+      },
+      "copyFormat": "text",
       "showReasoning": true,
       "showToolCalls": "always",
       "theme": "openai",
@@ -59,7 +73,7 @@
     "model": "",
     "autosave": false,
     "disableStreaming": false,
-    "disableTools": false
+    "tools": null
   },
   "commands": {
     "engine": "",
@@ -124,8 +138,8 @@
     "relevanceCutOff": 0.2
   },
   "stt": {
-    "engine": "openai",
-    "model": "whisper-1",
+    "engine": "openai", 
+    "model": "gpt-4o-transcribe",
     "locale": "",
     "vocabulary": [],
     "autoStart": false,
@@ -146,19 +160,17 @@
       "gpu": true
     },
     "soniox": {
-      "languageHints": [],
-      "endpointDetection": false,
-      "cleanup": true,
-      "audioFormat": "auto",
-      "proxy": "temporary_key",
-      "tempKeyExpiry": 600,
-      "speakerDiarization": false
+      "cleanup": false,
+      "audioFormat": "auto"
     }
   },
   "tts": {
     "engine": "openai",
     "model": "tts-1",
-    "voice": "alloy"
+    "voice": "alloy",
+    "customOpenAI": {
+      "baseURL": ""
+    }
   },
   "realtime": {
     "engine": "openai"
@@ -179,6 +191,7 @@
     "openai": {
       "apiKey": "",
       "baseURL": "https://api.openai.com/v1",
+      "hideDatedModels": true,
       "models": {
         "chat": [],
         "image": []
@@ -205,6 +218,7 @@
       }
     },
     "google": {
+      "vertexai": false,
       "models": {
         "chat": [],
         "image": []
@@ -430,7 +444,8 @@
       "enabled": true
     },
     "python": {
-      "enabled": false
+      "enabled": false,
+      "runtime": "embedded"
     },
     "search": {
       "enabled": false,
@@ -465,6 +480,9 @@
       "allowedPaths": [],
       "allowWrite": false,
       "skipConfirmation": false
+    },
+    "knowledge": {
+      "enabled": true
     }
   },
   "mcp": {

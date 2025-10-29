@@ -2,7 +2,7 @@
 <template>
   <Teleport to="body">
     <div :id="id" class="dialog swal2-center swal2-backdrop-show" :class="klass" v-bind="$attrs" ref="dialog">
-      <div class="swal2-popup swal2-show form form-large" :class="{ 'form-vertical': form === 'vertical' }" :style="style">
+      <div class="swal2-popup swal2-show form form-large" :class="{ 'form-vertical': form === 'vertical' }" :style="popupStyle">
         <div class="swal2-icon swal2-icon-show" v-if="icon && type === 'alert'">
           <div class="swal2-icon-content">
             <img src="/assets/icon.png" />
@@ -11,7 +11,7 @@
         <h2 class="dialog-title swal2-title" ref="title">
           <slot name="header"></slot>
         </h2>
-        <div class="dialog-body swal2-html-container" ref="content">
+        <div class="dialog-body swal2-html-container" ref="content" :style="bodyStyle">
           <slot name="body"></slot>
         </div>
         <div class="dialog-footer swal2-actions" ref="actions">
@@ -42,8 +42,16 @@ const props = defineProps({
     type: String,
     required: true
   },
+  dismissible: {
+    type: Boolean,
+    default: true
+  },
   width: {
-    type: Number,
+    type: String,
+    default: undefined
+  },
+  height: {
+    type: String,
     default: undefined
   },
   type: {
@@ -52,11 +60,15 @@ const props = defineProps({
   },
   icon: {
     type: Boolean,
-    default: true
+    default: false
   },
   form: {
     type: String as PropType<DialogForm>,
     default: 'vertical'
+  },
+  enterSaves: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -68,9 +80,20 @@ const klass = computed(() => {
   }
 })
 
-const style = computed(() => {
+const popupStyle = computed(() => {
   return {
-    ...(props.width ? { width: `${props.width}px` } : {}),
+    ...(props.width ? {
+      width: `${props.width} !important`,
+      maxWidth: `${props.width} !important`
+    } : {}),
+  }
+})
+
+const bodyStyle = computed(() => {
+  return {
+    ...(props.height ? {
+      height: `${props.height} !important`,
+    } : {}),
   }
 })
 
@@ -85,16 +108,15 @@ const show = async () => {
       // style it
       const button = children[i] as HTMLElement
       button.classList.add('swal2-styled')
-      if (button.classList.contains('default') || button.classList.contains('alert-confirm')) {
-        button.classList.add('swal2-confirm')
-        button.classList.add('alert-confirm')
-      } else {
-        button.classList.add('swal2-cancel')
-        button.classList.add('alert-neutral')
-      }
+      // if (button.classList.contains('default') || button.classList.contains('alert-confirm')) {
+      //   button.classList.add('swal2-confirm')
+      //   button.classList.add('primary')
+      // } else {
+      //   button.classList.add('swal2-cancel')
+      //   button.classList.add('tertiary')
+      // }
 
       // now move it
-      
       actions.value.insertBefore(button, buttons)
     }
 
@@ -131,8 +153,14 @@ const close = () => {
 const onKeyDown = (e: KeyboardEvent) => {
   if (e.key === 'Escape') {
     e.preventDefault()
-    close()
-  } else if (e.key === 'Enter') {
+    if (props.dismissible) {
+      close()
+    }
+  } else if (e.key === 'Enter' && props.enterSaves) {
+    const activeElement = document.activeElement
+    if (activeElement && activeElement.tagName === 'TEXTAREA' && !activeElement.classList.contains('text-textarea')) {
+      return
+    }
     e.preventDefault()
     emit('save')
   }

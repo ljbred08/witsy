@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unused-vars, no-case-declarations */
+/* eslint-disable no-case-declarations */
  
  
 import { vi, expect, test, beforeEach } from 'vitest'
@@ -6,26 +6,84 @@ import { Configuration } from '../../src/types/config'
 import { LlmEngine } from 'multi-llm-ts'
 import DeepResearchMultiStep from '../../src/services/deepresearch_ms'
 import DeepResearchMultiAgent from '../../src/services/deepresearch_ma'
+import DeepResearchAL, { mainLoopAgent, getComponentType } from '../../src/services/deepresearch_al'
 import * as dr from '../../src/services/deepresearch'
 import Chat from '../../src/models/chat'
 import Message from '../../src/models/message'
 import SearchPlugin from '../../src/plugins/search'
 import Generator from '../../src/services/generator'
+import AgentWorkflowExecutor, { AgentWorkflowExecutorOpts } from '../../src/services/agent_executor_workflow'
+import { AgentRun, AgentRunTrigger } from '../../src/types/agents'
+import { DEFAULT_WORKSPACE_ID } from '../../src/main/workspace'
 
 // Mock dependencies
 vi.mock('../../src/plugins/search')
 vi.mock('../../src/services/generator')
 vi.mock('../../src/plugins/agent')
 
-// Mock Runner properly
-vi.mock('../../src/services/runner', () => {
+// Mock LlmUtils
+vi.mock('../../src/services/llm_utils', () => {
+  return {
+    default: vi.fn().mockImplementation(() => ({
+      generateStatusUpdate: vi.fn().mockResolvedValue('Status update generated'),
+      getEngineModelForTask: vi.fn().mockReturnValue({ engine: 'test', model: 'test-model' }),
+      getTitle: vi.fn().mockResolvedValue('Test Title'),
+      evaluateToolCall: vi.fn().mockResolvedValue('safe'),
+      getToolCallDescription: vi.fn().mockResolvedValue('Tool action')
+    }))
+  }
+})
+
+// Mock LlmFactory
+vi.mock('../../src/llms/llm', () => {
+  const mockLlm = {
+    getId: () => 'test-engine',
+    getName: () => 'Test Engine',
+    addPlugin: vi.fn(),
+    clearPlugins: vi.fn(),
+    plugins: []
+  }
+  return {
+    default: {
+      manager: vi.fn().mockReturnValue({
+        igniteEngine: vi.fn().mockReturnValue(mockLlm),
+        getChatModel: vi.fn().mockReturnValue({ id: 'test-model' })
+      })
+    }
+  }
+})
+
+// Mock useTools
+vi.mock('../../src/composables/tools', () => ({
+  useTools: vi.fn().mockReturnValue({
+    getAllAvailableTools: vi.fn().mockResolvedValue({ allTools: [] }),
+    getToolsForGeneration: vi.fn().mockResolvedValue('')
+  })
+}))
+
+// Mock LlmUtils
+vi.mock('../../src/services/llm_utils', () => {
+  const parseJson = (content: string): any => JSON.parse(content)
+  const MockLlmUtils = vi.fn().mockImplementation(() => ({
+    generateStatusUpdate: vi.fn().mockResolvedValue('Status update generated'),
+    getSystemInstructions: vi.fn().mockImplementation((instr) => instr || 'System instructions'),
+    getTitle: vi.fn().mockResolvedValue('Test Title'),
+    evaluateOutput: vi.fn().mockResolvedValue({ quality: 'pass', feedback: 'Good' }),
+    getEngineModelForTask: vi.fn().mockReturnValue({ engine: 'test-engine', model: 'test-model' })
+  }))
+  MockLlmUtils.parseJson = parseJson
+
+  return {
+    default: MockLlmUtils
+  }
+})
+
+// Mock AgentWorkflowExecutor properly
+vi.mock('../../src/services/agent_executor_workflow', () => {
   return {
     default: vi.fn()
   }
 })
-
-import Runner from '../../src/services/runner'
-import { AgentRun } from '../../src/types'
 
 const mockConfig: Configuration = {
   deepresearch: {
@@ -36,6 +94,18 @@ const mockConfig: Configuration = {
       enabled: true,
       engine: 'google'
     }
+  },
+  engines: {
+    'test-engine': {
+      models: {
+        chat: [
+          { id: 'test-model', name: 'Test Model', capabilities: { tools: true, vision: false, reasoning: false } }
+        ]
+      }
+    }
+  },
+  llm: {
+    engine: 'test-engine'
   }
 } as unknown as Configuration
 
@@ -74,10 +144,11 @@ const synthesisResult: AgentRun = {
 } as AgentRun
 
 beforeEach(() => {
+  
   vi.clearAllMocks()
   
-  // Setup Runner mock
-  const mockRunnerInstance = {
+  // Setup AgentWorkflowExecutor mock
+  const mockExecutorInstance = {
     run: vi.fn((workflow, prompt) => {
       // Determine which agent is being called based on the prompt content
       if (prompt.includes('Plan the research report structure')) {
@@ -93,7 +164,7 @@ beforeEach(() => {
   }
   
   // @ts-expect-error mock
-  vi.mocked(Runner).mockImplementation(() => mockRunnerInstance)
+  vi.mocked(AgentWorkflowExecutor).mockImplementation(() => mockExecutorInstance)
   
   // Setup SearchPlugin mock
   // @ts-expect-error mock
@@ -200,7 +271,7 @@ test('Analysis agent parameters', () => {
 test('Writer agent configuration', () => {
   expect(dr.writerAgent.name).toBe('writer')
   expect(dr.writerAgent.description).toContain('Section generator')
-  expect(dr.writerAgent.steps[0].tools).toContain('run_python_code')
+  expect(dr.writerAgent.steps[0].tools).toEqual([])
 })
 
 test('Writer agent prompt building', () => {
@@ -231,10 +302,42 @@ test('Writer agent parameters', () => {
   expect(keyLearningsParam?.type).toBe('array')
 })
 
+test('Title agent configuration', () => {
+  expect(dr.titleAgent.name).toBe('title')
+  expect(dr.titleAgent.description).toContain('Expert title generator')
+  expect(dr.titleAgent.steps[0].tools).toEqual([])
+})
+
+test('Title agent prompt building', () => {
+  const prompt = dr.titleAgent.buildPrompt(0, {
+    researchTopic: 'Quantum Computing Applications',
+    keyLearnings: ['Quantum computers can solve optimization problems', 'They show promise in cryptography', 'Current limitations exist in error rates']
+  })
+
+  expect(prompt).toContain('Quantum Computing Applications')
+  expect(prompt).toContain('Quantum computers can solve optimization problems')
+  expect(prompt).toContain('They show promise in cryptography')
+})
+
+test('Title agent parameters', () => {
+  const params = dr.titleAgent.parameters
+  const researchTopicParam = params.find(p => p.name === 'researchTopic')
+  const keyLearningsParam = params.find(p => p.name === 'keyLearnings')
+
+  expect(researchTopicParam?.required).toBe(true)
+  expect(keyLearningsParam?.required).toBe(true)
+  expect(keyLearningsParam?.type).toBe('array')
+})
+
+test('Title agent structured output', () => {
+  expect(dr.titleAgent.steps[0].structuredOutput?.name).toBe('title')
+  expect(dr.titleAgent.steps[0].structuredOutput?.structure).toBeDefined()
+})
+
 test('Synthesis agent configuration', () => {
   expect(dr.synthesisAgent.name).toBe('synthesis')
   expect(dr.synthesisAgent.description).toContain('Expert report synthesizer')
-  expect(dr.synthesisAgent.steps[0].tools).toContain('run_python_code')
+  expect(dr.synthesisAgent.steps[0].tools).toEqual([])
 })
 
 test('Synthesis agent prompt building for executive summary', () => {
@@ -273,27 +376,16 @@ test('Synthesis agent parameters', () => {
 })
 
 test('DeepResearchMultiStep creation', () => {
-  const deepResearch = new DeepResearchMultiStep(mockConfig)
+  const deepResearch = new DeepResearchMultiStep(mockConfig, DEFAULT_WORKSPACE_ID)
   expect(deepResearch).toBeInstanceOf(DeepResearchMultiStep)
   expect(deepResearch.config).toBe(mockConfig)
 })
 
-test('DeepResearchMultiStep stop functionality', () => {
-  const deepResearch = new DeepResearchMultiStep(mockConfig)
-  const abortSpy = vi.fn()
-  const stopSpy = vi.fn()
-  
-  deepResearch.abortController = { abort: abortSpy } as any
-  deepResearch.generators = [{ stop: stopSpy }] as any
-
-  deepResearch.stop()
-
-  expect(abortSpy).toHaveBeenCalled()
-  expect(stopSpy).toHaveBeenCalled()
-})
-
 test('DeepResearchMultiStep complete agent chain execution', async () => {
-  const deepResearch = new DeepResearchMultiStep(mockConfig)
+  // Reset mocks to track calls
+  vi.clearAllMocks()
+
+  const deepResearch = new DeepResearchMultiStep(mockConfig, DEFAULT_WORKSPACE_ID)
   const chat = new Chat()
   chat.messages = [
     new Message('system', 'You are a deep research assistant'),
@@ -323,29 +415,18 @@ test('DeepResearchMultiStep complete agent chain execution', async () => {
     })
   }))
 
-  // Mock Generator with tracking
+  // Generator mock no longer needed for status updates (uses LlmUtils now)
   // @ts-expect-error mock
   vi.mocked(Generator).mockImplementation(() => ({
-     
-    generate: vi.fn().mockImplementation(async (engine, messages, options) => {
-      executionLog.push('status_update')
-      // Add the status update to the response message
-      const lastMessage = messages[messages.length - 1]
-      lastMessage.appendText({
-        type: 'content',
-        text: `Status: ${messages[messages.length - 2]?.content || 'Starting'}`,
-        done: false
-      })
-      return 'success'
-    }),
+    generate: vi.fn().mockResolvedValue('success'),
     stop: vi.fn()
   }))
 
-  // Mock Runner with detailed tracking and realistic responses
+  // Mock AgentWorkflowExecutor with detailed tracking and realistic responses
   // @ts-expect-error mock
-  vi.mocked(Runner).mockImplementation((config, agent) => {
+  vi.mocked(AgentWorkflowExecutor).mockImplementation((config: Configuration, workspaceId: string, agent: Agent) => {
     return {
-      run: vi.fn().mockImplementation(async (workflow, prompt, options) => {
+      run: vi.fn().mockImplementation(async (trigger: AgentRunTrigger, prompt: string, options: AgentWorkflowExecutorOpts) => {
         const agentName = agent.name
         executionLog.push(`agent:${agentName}`)
         agentCalls.push({ agent: agentName, prompt, options })
@@ -390,6 +471,11 @@ test('DeepResearchMultiStep complete agent chain execution', async () => {
               ]}
             }
 
+          case 'title':
+            return { messages: [
+              new Message('assistant', `{"title": "Research Report: Test Topic"}`)
+            ]}
+
           default:
             return {
               messages: [new Message('assistant', `Response from ${agentName} agent`)]
@@ -404,48 +490,47 @@ test('DeepResearchMultiStep complete agent chain execution', async () => {
 
   // Verify the final response contains all sections
   const responseContent = chat.messages[chat.messages.length - 1].content
+  expect(responseContent).toContain('<artifact')
   expect(responseContent).toContain('# Executive Summary')
   expect(responseContent).toContain('## 1. Section 1')
   expect(responseContent).toContain('## 2. Section 2')
   expect(responseContent).toContain('# Conclusion')
   expect(responseContent).toContain('Sources:')
+  expect(responseContent).toContain('</artifact>')
 
   // Verify search results are included as sources
   expect(responseContent).toContain('[Search Result for q1_1](https://example.com/q1_1)')
   expect(responseContent).toContain('[Search Result for q1_2](https://example.com/q1_2)')
   expect(responseContent).toContain('[Search Result for q2_1](https://example.com/q2_1)')
 
-  // Verify complete execution chain
+  // Verify complete execution chain (status updates are now mocked and not tracked)
   const expectedExecutionFlow = [
-    'status_update',
     'agent:planning',
-    'status_update',
     'search:q1_1',
     'search:q1_2',
     'search:q2_1',
-    'status_update',
+    'agent:analysis',
     'agent:analysis',
     'agent:writer',
-    'agent:analysis',
     'agent:writer',
-    'status_update',
     'agent:synthesis',
     'agent:synthesis',
-    'status_update',
+    'agent:title',
   ]
 
   // Check that all expected steps were executed
-  expectedExecutionFlow.forEach((step, index) => {
+  expect(executionLog.length).toEqual(expectedExecutionFlow.length)
+  expectedExecutionFlow.forEach((step) => {
     expect(executionLog).toContain(step)
   })
 
-  // Verify Runner was called the expected number of times
-  expect(Runner).toHaveBeenCalledTimes(6) // 1 planning + 2 analysis + 2 writer + 2 synthesis = 6
+  // Verify AgentWorkflowExecutor was called the expected number of times
+  expect(AgentWorkflowExecutor).toHaveBeenCalledTimes(7) // 1 planning + 2 analysis + 2 writer + 1 synthesis + 1 title = 7
 
   // Verify agent call sequence
   const agentCallSequence = agentCalls.map(call => call.agent)
   expect(agentCallSequence).toEqual([
-    'planning', 'analysis', 'analysis', 'writer', 'writer', 'synthesis', 'synthesis'
+    'planning', 'analysis', 'analysis', 'writer', 'writer', 'synthesis', 'synthesis', 'title'
   ])
 
   // Verify the planning agent was called with correct parameters
@@ -472,20 +557,26 @@ test('DeepResearchMultiStep complete agent chain execution', async () => {
   expect(synthesisCalls[0].prompt).toContain('executive_summary')
   expect(synthesisCalls[1].prompt).toContain('conclusion')
 
+  // Verify generateStatusUpdate was called 6 times
+  // (before planning, after planning, after search, before synthesis, before title, final)
+  const LlmUtilsMock = vi.mocked(await import('../../src/services/llm_utils')).default
+  const llmUtilsInstance = LlmUtilsMock.mock.results[0]?.value
+  expect(llmUtilsInstance.generateStatusUpdate).toHaveBeenCalledTimes(6)
+
 })
 
 test('DeepResearchMultiStep JSON parsing error handling', async () => {
   // Override the mock for this specific test
-  const mockRunnerInstance = {
+  const mockExecutorInstance = {
     run: vi.fn().mockResolvedValue({
       messages: [new Message('assistant', 'Invalid JSON response')]
     })
   }
   
   // @ts-expect-error mock
-  vi.mocked(Runner).mockImplementation(() => mockRunnerInstance)
+  vi.mocked(AgentWorkflowExecutor).mockImplementation(() => mockExecutorInstance)
   
-  const deepResearch = new DeepResearchMultiStep(mockConfig)
+  const deepResearch = new DeepResearchMultiStep(mockConfig, DEFAULT_WORKSPACE_ID)
   const chat = new Chat()
   chat.messages = [
     new Message('system', 'You are a helpful assistant'),
@@ -502,13 +593,20 @@ test('DeepResearchMultiStep JSON parsing error handling', async () => {
 })
 
 test('DeepResearchMultiStep abort handling', async () => {
-  const deepResearch = new DeepResearchMultiStep(mockConfig)
+  const deepResearch = new DeepResearchMultiStep(mockConfig, DEFAULT_WORKSPACE_ID)
   const chat = new Chat()
   chat.messages = [
     new Message('system', 'You are a helpful assistant'),
     new Message('user', 'Research quantum computing'),
     new Message('assistant', '')
   ]
+
+  // Create AbortController for the test
+  const abortController = new AbortController()
+  const optsWithSignal = {
+    ...mockOpts,
+    abortSignal: abortController.signal
+  }
 
   // Create a promise that we can control
   let resolveRun: any
@@ -517,19 +615,19 @@ test('DeepResearchMultiStep abort handling', async () => {
   })
 
   // Override the mock to simulate a long-running operation
-  const mockRunnerInstance = {
+  const mockExecutorInstance = {
     run: vi.fn().mockImplementation(() => runPromise)
   }
-  
+
   // @ts-expect-error mock
-  vi.mocked(Runner).mockImplementation(() => mockRunnerInstance)
+  vi.mocked(AgentWorkflowExecutor).mockImplementation(() => mockExecutorInstance)
 
   // Start the run operation
-  const resultPromise = deepResearch.run(mockEngine, chat, mockOpts)
-  
+  const resultPromise = deepResearch.run(mockEngine, chat, optsWithSignal)
+
   // Simulate abort after a short delay
   setTimeout(() => {
-    deepResearch.stop() // This should call abortController.abort()
+    abortController.abort() // Trigger abort signal
     // Resolve the mock to continue execution
     resolveRun(planningResult)
   }, 10)
@@ -538,45 +636,16 @@ test('DeepResearchMultiStep abort handling', async () => {
   expect(result).toBe('stopped')
 })
 
-test('DeepResearchMultiStep JSON parsing valid content', () => {
-  const deepResearch = new DeepResearchMultiStep(mockConfig)
-  const validJson = '{"sections": [{"title": "Test"}]}'
-  const result = deepResearch['parseJson'](validJson)
-  expect(result).toEqual({ sections: [{ title: 'Test' }] })
-})
-
-test('DeepResearchMultiStep JSON parsing with extra content', () => {
-  const deepResearch = new DeepResearchMultiStep(mockConfig)
-  const jsonWithExtra = 'Some text before {"sections": [{"title": "Test"}]} some text after'
-  const result = deepResearch['parseJson'](jsonWithExtra)
-  expect(result).toEqual({ sections: [{ title: 'Test' }] })
-})
-
-test('DeepResearchMultiStep JSON parsing invalid content', () => {
-  const deepResearch = new DeepResearchMultiStep(mockConfig)
-  const invalidJson = 'No JSON here'
-  expect(() => deepResearch['parseJson'](invalidJson)).toThrow('No JSON object found in content')
-})
 
 test('DeepResearchMultiAgent creation', () => {
-  const deepResearch = new DeepResearchMultiAgent(mockConfig)
+  const deepResearch = new DeepResearchMultiAgent(mockConfig, DEFAULT_WORKSPACE_ID)
   expect(deepResearch).toBeInstanceOf(DeepResearchMultiAgent)
   expect(deepResearch.config).toBe(mockConfig)
   expect(deepResearch.storage).toEqual({})
 })
 
-test('DeepResearchMultiAgent stop functionality', () => {
-  const deepResearch = new DeepResearchMultiAgent(mockConfig)
-  const mockGenerator = { stop: vi.fn() }
-  deepResearch.generator = mockGenerator as any
-
-  deepResearch.stop()
-
-  expect(mockGenerator.stop).toHaveBeenCalled()
-})
-
 test('DeepResearchMultiAgent storage and retrieval', async () => {
-  const deepResearch = new DeepResearchMultiAgent(mockConfig)
+  const deepResearch = new DeepResearchMultiAgent(mockConfig, DEFAULT_WORKSPACE_ID)
   const testData = { key: 'value', number: 42 }
   
   const id = await deepResearch.store(testData)
@@ -588,7 +657,7 @@ test('DeepResearchMultiAgent storage and retrieval', async () => {
 })
 
 test('DeepResearchMultiAgent retrieve non-existent key', async () => {
-  const deepResearch = new DeepResearchMultiAgent(mockConfig)
+  const deepResearch = new DeepResearchMultiAgent(mockConfig, DEFAULT_WORKSPACE_ID)
   const result = await deepResearch.retrieve('non-existent-key')
   expect(result).toBeUndefined()
 })
@@ -596,7 +665,7 @@ test('DeepResearchMultiAgent retrieve non-existent key', async () => {
 test('DeepResearchMultiAgent engine setup', async () => {
   vi.clearAllMocks()
   
-  const deepResearch = new DeepResearchMultiAgent(mockConfig)
+  const deepResearch = new DeepResearchMultiAgent(mockConfig, DEFAULT_WORKSPACE_ID)
   const chat = new Chat()
   chat.messages = []
 
@@ -615,7 +684,7 @@ test('DeepResearchMultiAgent engine setup', async () => {
 test('DeepResearchMultiAgent system message setup', async () => {
   vi.clearAllMocks()
   
-  const deepResearch = new DeepResearchMultiAgent(mockConfig)
+  const deepResearch = new DeepResearchMultiAgent(mockConfig, DEFAULT_WORKSPACE_ID)
   const chat = new Chat()
   chat.messages = []
 
@@ -638,7 +707,7 @@ test('DeepResearchMultiAgent system message setup', async () => {
 test('DeepResearchMultiAgent generator call', async () => {
   vi.clearAllMocks()
   
-  const deepResearch = new DeepResearchMultiAgent(mockConfig)
+  const deepResearch = new DeepResearchMultiAgent(mockConfig, DEFAULT_WORKSPACE_ID)
   const chat = new Chat()
   chat.messages = []
 
@@ -663,12 +732,13 @@ test('DeepResearchMultiAgent generator call', async () => {
 })
 
 test('Deep research agents count', () => {
-  expect(dr.deepResearchAgents).toHaveLength(5)
+  expect(dr.deepResearchAgents).toHaveLength(6)
   expect(dr.deepResearchAgents.map(a => a.name)).toEqual([
     'planning',
     'search', 
     'analysis',
     'writer',
+    'title',
     'synthesis'
   ])
 })
@@ -695,4 +765,392 @@ test('Deep research agents parameter validation', () => {
       expect(typeof param.required).toBe('boolean')
     })
   })
+})
+
+// ==================== DEEPRESEARCH AL TESTS ====================
+
+test('DeepResearchAgentLoop - Main loop agent configuration', () => {
+  expect(mainLoopAgent.name).toBe('deep_research_main_loop')
+  expect(mainLoopAgent.description).toContain('Strategic research coordinator')
+  expect(mainLoopAgent.steps[0].structuredOutput).toBeDefined()
+  expect(mainLoopAgent.steps[0].structuredOutput!.name).toBe('research_decision')
+})
+
+test('DeepResearchAgentLoop - Main loop agent schema', () => {
+  const schema = mainLoopAgent.steps[0].structuredOutput!.structure
+  expect(schema).toBeDefined()
+
+  // Verify schema has expected fields
+  const shape = schema._def.shape()
+  expect(shape.status).toBeDefined()
+  expect(shape.nextAction).toBeDefined()
+  expect(shape.agentName).toBeDefined()
+  expect(shape.agentParamsJson).toBeDefined()
+  expect(shape.reasoning).toBeDefined()
+  expect(shape.estimatedRemaining).toBeDefined()
+  expect(shape.deliveryMessage).toBeDefined()
+})
+
+test('DeepResearchAgentLoop - Constructor initializes agent mapping', () => {
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+
+  // @ts-expect-error accessing private property for testing
+  const agentMap = deepResearchAL.deepResearchAgents
+
+  expect(agentMap.size).toBe(dr.deepResearchAgents.length)
+  expect(agentMap.has('planning')).toBe(true)
+  expect(agentMap.has('search')).toBe(true)
+  expect(agentMap.has('analysis')).toBe(true)
+  expect(agentMap.has('writer')).toBe(true)
+  expect(agentMap.has('title')).toBe(true)
+  expect(agentMap.has('synthesis')).toBe(true)
+})
+
+test('DeepResearchAgentLoop - Uses mainLoopAgent by default', () => {
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+
+  // Verify the class is instantiated correctly
+  expect(deepResearchAL).toBeDefined()
+  expect(deepResearchAL.agent.name).toBe('deep_research_main_loop')
+})
+
+test('DeepResearchAgentLoop - getComponentType helper maps agent names correctly', () => {
+  expect(getComponentType('planning', {})).toBe('plan')
+  expect(getComponentType('search', {})).toBe('search_results')
+  expect(getComponentType('analysis', {})).toBe('learnings')
+  expect(getComponentType('writer', {})).toBe('section')
+  expect(getComponentType('title', {})).toBe('title')
+  expect(getComponentType('synthesis', { outputType: 'conclusion' })).toBe('conclusion')
+  expect(getComponentType('synthesis', { outputType: 'executive_summary' })).toBe('exec_summary')
+  expect(getComponentType('synthesis', {})).toBe('exec_summary') // default
+  expect(getComponentType('unknown', {})).toBeUndefined()
+})
+
+test('DeepResearchAgentLoop - buildReflectionContext with no reflections', () => {
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+
+  // @ts-expect-error accessing private method for testing
+  const context = deepResearchAL.buildReflectionContext()
+
+  expect(context).toBe('')
+})
+
+test('DeepResearchAgentLoop - buildReflectionContext with reflections', () => {
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+
+  // @ts-expect-error accessing private property for testing
+  deepResearchAL.reflections = [
+    { type: 'failure', message: 'Test failed' },
+    { type: 'learning', message: 'Learned something' }
+  ]
+
+  // @ts-expect-error accessing private method for testing
+  const context = deepResearchAL.buildReflectionContext()
+
+  expect(context).toContain('PREVIOUS LEARNINGS & FEEDBACK')
+  expect(context).toContain('Test failed')
+  expect(context).toContain('Learned something')
+})
+
+test('DeepResearchAgentLoop - buildReflectionContext with tool abortions', () => {
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+
+  // @ts-expect-error accessing private property for testing
+  deepResearchAL.toolAbortions = [{
+    name: 'search_internet',
+    params: { query: 'test' },
+    reason: { decision: 'deny' }
+  }]
+
+  // @ts-expect-error accessing private method for testing
+  const context = deepResearchAL.buildReflectionContext()
+
+  expect(context).toContain('IMPORTANT - Tool Abortions')
+  expect(context).toContain('search_internet')
+  // expect(context).toContain('User denied')
+})
+
+test('DeepResearchAgentLoop - resolveToolPlugins returns empty for no catalog', () => {
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+
+  // @ts-expect-error accessing private method for testing
+  const plugins = deepResearchAL.resolveToolPlugins(['search_internet'])
+
+  expect(plugins).toEqual([])
+})
+
+test('DeepResearchAgentLoop - generateStatusUpdate sets transient and status', async () => {
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+  const message = new Message('assistant', '')
+  const opts = { ...mockOpts, engine: 'test-engine', model: 'test-model' }
+
+  // @ts-expect-error accessing private method for testing
+  await deepResearchAL.generateStatusUpdate('Test prompt', message, opts)
+
+  expect(message.transient).toBe(true)
+  expect(message.status).toBe('Status update generated')
+})
+
+test('DeepResearchAgentLoop - Handles agentParamsJson as string', () => {
+  const jsonString = '{"searchQuery":"test","maxResults":8}'
+  const parsed = JSON.parse(jsonString)
+
+  expect(parsed.searchQuery).toBe('test')
+  expect(parsed.maxResults).toBe(8)
+})
+
+test('DeepResearchAgentLoop - Handles agentParamsJson as object', () => {
+  const jsonObject = {"searchQuery":"test","maxResults":8}
+
+  expect(jsonObject.searchQuery).toBe('test')
+  expect(jsonObject.maxResults).toBe(8)
+})
+
+test('DeepResearchAgentLoop - Handles agentParamsJson as array for parallel', () => {
+  const jsonArray = [
+    {"searchQuery":"test1","maxResults":8},
+    {"searchQuery":"test2","maxResults":8}
+  ]
+
+  expect(Array.isArray(jsonArray)).toBe(true)
+  expect(jsonArray.length).toBe(2)
+  expect(jsonArray[0].searchQuery).toBe('test1')
+  expect(jsonArray[1].searchQuery).toBe('test2')
+})
+
+test('DeepResearchAgentLoop - Extracts _relevantMemory from params', () => {
+  const params = {
+    searchQuery: 'test',
+    maxResults: 8,
+    _relevantMemory: ['mem-id-1', 'mem-id-2']
+  }
+
+  const { _relevantMemory, ...cleanParams } = params
+
+  expect(_relevantMemory).toEqual(['mem-id-1', 'mem-id-2'])
+  expect(cleanParams).toEqual({
+    searchQuery: 'test',
+    maxResults: 8
+  })
+  expect(cleanParams._relevantMemory).toBeUndefined()
+})
+
+test('DeepResearchAgentLoop - Configuration values injected into main loop', () => {
+  const opts: dr.DeepResearchOpts = {
+    model: 'test-model',
+    breadth: 5,
+    depth: 3,
+    searchResults: 10
+  }
+
+  // Test that breadth, depth, searchResults would be available
+  expect(opts.breadth).toBe(5)
+  expect(opts.depth).toBe(3)
+  expect(opts.searchResults).toBe(10)
+})
+
+test('DeepResearchAgentLoop - Parallel execution with array params', () => {
+  const paramsString = '[{"searchQuery":"q1","maxResults":8},{"searchQuery":"q2","maxResults":8}]'
+  const parsed = JSON.parse(paramsString)
+
+  expect(Array.isArray(parsed)).toBe(true)
+  expect(parsed.length).toBe(2)
+
+  // Both should execute in parallel
+  parsed.forEach((p: any) => {
+    expect(p.maxResults).toBe(8)
+  })
+})
+
+test('DeepResearchAgentLoop - Sequential execution with single params', () => {
+  const paramsString = '{"searchQuery":"q1","maxResults":8}'
+  const parsed = JSON.parse(paramsString)
+
+  expect(Array.isArray(parsed)).toBe(false)
+  expect(parsed.searchQuery).toBe('q1')
+})
+
+test('DeepResearchAgentLoop - Full workflow with mocked Generator', async () => {
+  const chat = new Chat()
+  chat.addMessage(new Message('system', 'System'))
+  chat.addMessage(new Message('user', 'test research'))
+  chat.addMessage(new Message('assistant', ''))
+
+  let generateCallCount = 0
+
+  // Mock Generator to simulate agent loop
+  // @ts-expect-error mock
+  vi.mocked(Generator).mockImplementation(() => ({
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    generate: vi.fn().mockImplementation(async (llm, messages, opts, callback) => {
+      generateCallCount++
+      const response = messages[messages.length - 1]
+
+      // Iteration 1: Main loop decides to plan
+      if (generateCallCount === 1) {
+        response.content = JSON.stringify({
+          status: 'continue',
+          agentName: 'planning',
+          agentParamsJson: '{"userQuery":"test","numSections":1,"numQueriesPerSection":1,"_relevantMemory":[]}',
+          nextAction: 'Plan',
+          reasoning: 'Need plan',
+          estimatedRemaining: 3
+        })
+        return 'success'
+      }
+
+      // Iteration 2: Planning agent returns plan
+      if (generateCallCount === 2) {
+        response.content = JSON.stringify({
+          sections: [{ title: 'Test Section', description: 'Test', queries: ['test query'] }]
+        })
+        return 'success'
+      }
+
+      // Iteration 3: Main loop decides done
+      if (generateCallCount === 3) {
+        response.content = JSON.stringify({
+          status: 'done',
+          deliveryMessage: 'Done',
+          reasoning: 'Complete'
+        })
+        return 'success'
+      }
+
+      return 'success'
+    }),
+    stop: vi.fn()
+  }))
+
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+  const result = await deepResearchAL.run(mockEngine, chat, mockOpts)
+
+  expect(result).toBe('success')
+  expect(generateCallCount).toBe(3)
+  expect(chat.messages.length).toBeGreaterThan(2)
+})
+
+test('DeepResearchAgentLoop - Workflow with search and analysis', async () => {
+  const chat = new Chat()
+  chat.addMessage(new Message('system', 'System'))
+  chat.addMessage(new Message('user', 'test'))
+  chat.addMessage(new Message('assistant', ''))
+
+  let callCount = 0
+
+  // @ts-expect-error mock
+  vi.mocked(Generator).mockImplementation(() => ({
+    generate: vi.fn().mockImplementation(async (llm, messages, opts, callback) => {
+      callCount++
+      const response = messages[messages.length - 1]
+
+      if (callCount === 1) {
+        // Main loop: plan
+        response.content = JSON.stringify({
+          status: 'continue',
+          agentName: 'planning',
+          agentParamsJson: '{"userQuery":"test","numSections":1,"numQueriesPerSection":1,"_relevantMemory":[]}',
+          nextAction: 'Plan',
+          reasoning: 'Start',
+          estimatedRemaining: 5
+        })
+      } else if (callCount === 2) {
+        // Planning result
+        response.content = JSON.stringify({ sections: [{ title: 'S1', description: 'D1', queries: ['q1'] }] })
+      } else if (callCount === 3) {
+        // Main loop: search
+        response.content = JSON.stringify({
+          status: 'continue',
+          agentName: 'search',
+          agentParamsJson: '{"searchQuery":"q1","maxResults":8,"_relevantMemory":[]}',
+          nextAction: 'Search',
+          reasoning: 'Search',
+          estimatedRemaining: 4
+        })
+      } else if (callCount === 4) {
+        // Search result with tool callback
+        response.content = 'Search results here'
+        if (callback) {
+          callback({ type: 'tool', name: 'search_internet', done: true, call: { result: { results: [{ title: 'T1', url: 'http://test.com' }] } } } as any)
+        }
+      } else if (callCount === 5) {
+        // Main loop: done
+        response.content = JSON.stringify({
+          status: 'done',
+          deliveryMessage: 'Done',
+          reasoning: 'Complete'
+        })
+      }
+
+      return 'success'
+    }),
+    stop: vi.fn()
+  }))
+
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+  const result = await deepResearchAL.run(mockEngine, chat, mockOpts)
+
+  expect(result).toBe('success')
+  expect(callCount).toBe(5)
+})
+
+test('DeepResearchAgentLoop - Error handling in runAgentLoop', async () => {
+  const chat = new Chat()
+  chat.addMessage(new Message('system', 'System'))
+  chat.addMessage(new Message('user', 'test'))
+  chat.addMessage(new Message('assistant', ''))
+
+  // @ts-expect-error mock
+  vi.mocked(Generator).mockImplementation(() => ({
+    generate: vi.fn().mockRejectedValue(new Error('Test error')),
+    stop: vi.fn()
+  }))
+
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+  const result = await deepResearchAL.run(mockEngine, chat, mockOpts)
+
+  expect(result).toBe('error')
+})
+
+test('DeepResearchAgentLoop - Abort signal handling', async () => {
+  const chat = new Chat()
+  chat.addMessage(new Message('system', 'System'))
+  chat.addMessage(new Message('user', 'test'))
+  chat.addMessage(new Message('assistant', ''))
+
+  const abortController = new AbortController()
+  let callCount = 0
+
+  // @ts-expect-error mock
+  vi.mocked(Generator).mockImplementation(() => ({
+    generate: vi.fn().mockImplementation(async (llm, messages) => {
+      callCount++
+      const response = messages[messages.length - 1]
+
+      if (callCount === 1) {
+        // First iteration succeeds
+        response.content = JSON.stringify({
+          status: 'continue',
+          agentName: 'planning',
+          agentParamsJson: '{"userQuery":"test","_relevantMemory":[]}',
+          nextAction: 'test',
+          reasoning: 'test'
+        })
+      } else if (callCount === 2) {
+        // Planning agent executes
+        response.content = JSON.stringify({ sections: [] })
+      } else {
+        // After planning, abort before next iteration
+        abortController.abort()
+        response.content = JSON.stringify({ status: 'continue', agentName: 'search', agentParamsJson: '{}', nextAction: 'search', reasoning: 'search' })
+      }
+      return 'success'
+    }),
+    stop: vi.fn()
+  }))
+
+  const deepResearchAL = new DeepResearchAL(mockConfig, DEFAULT_WORKSPACE_ID)
+  const result = await deepResearchAL.run(mockEngine, chat, { ...mockOpts, abortSignal: abortController.signal })
+
+  expect(result).toBe('stopped')
 })

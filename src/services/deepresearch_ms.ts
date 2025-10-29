@@ -1,12 +1,12 @@
 
-import { Configuration } from '../types/config'
 import { LlmChunkTool, LlmEngine, addUsages } from 'multi-llm-ts'
-import * as dr from './deepresearch'
-import Generator, { GenerationResult } from './generator'
-import SearchPlugin, { SearchResultItem } from '../plugins/search'
-import Message from '../models/message'
 import Chat from '../models/chat'
-import Runner from './runner'
+import SearchPlugin, { SearchResultItem } from '../plugins/search'
+import { Configuration } from '../types/config'
+import AgentWorkflowExecutor from './agent_executor_workflow'
+import * as dr from './deepresearch'
+import { GenerationResult } from './generator'
+import LlmUtils from './llm_utils'
 
 type ResearchSection = {
   title: string,
@@ -21,25 +21,16 @@ class AbortError extends Error {
 export default class DeepResearchMultiStep implements dr.DeepResearch {
 
   config: Configuration
-  abortController: AbortController
-  generators: Generator[]
+  workspaceId: string
   engine: LlmEngine
   model: string
 
-  constructor(config: Configuration) {
+  constructor(config: Configuration, workspaceId: string) {
     this.config = config
-    this.generators = []
-  }
-
-  stop = (): void => {
-    this.abortController?.abort()
-    this.generators?.forEach(generator => generator.stop())
+    this.workspaceId = workspaceId
   }
 
   run = async (engine: LlmEngine, chat: Chat, opts: dr.DeepResearchOpts): Promise<GenerationResult> => {
-
-    // reset
-    this.abortController = new AbortController()
 
     // save this
     this.engine = engine
@@ -52,7 +43,10 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
     try {
 
       // status
-      await this.generateStatusUpdate(`I am going to create a research plan for the following topic: ${researchTopic}`, response)
+      const llmUtils = new LlmUtils(this.config)
+      const status1 = await llmUtils.generateStatusUpdate(this.engine.getId(), this.model, `I am going to create a research plan for the following topic: ${researchTopic}`)
+      response.appendText({ type: 'content', text: status1 + '\n\n', done: false })
+      response.transient = true
 
       // fake tool call
       const planningToolCall = {
@@ -68,7 +62,7 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
       response.addToolCall(planningToolCall)
         
       // we start by running the planning agent
-      const planner = new Runner(this.config, dr.planningAgent)
+      const planner = new AgentWorkflowExecutor(this.config, this.workspaceId, dr.planningAgent)
       const run = await planner.run('workflow', dr.planningAgent.buildPrompt(0, {
         userQuery: researchTopic,
         numSections: opts.breadth,
@@ -89,7 +83,7 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
       response.usage = addUsages(response.usage, planMessage.usage)
 
       // stopped?
-      if (this.abortController?.signal.aborted) {
+      if (opts.abortSignal?.aborted) {
         throw new AbortError()
       }
 
@@ -97,7 +91,7 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
       let sections: ResearchSection[] = []
 
       try {
-        const plan = this.parseJson(planMessage.content)
+        const plan = LlmUtils.parseJson(planMessage.content)
         sections = plan.sections
       } catch (e) {
         response.appendText({
@@ -110,7 +104,9 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
       }
 
       // status
-      await this.generateStatusUpdate(`The plan is completed. Proceeding with generating content for the following sections:\n${sections.map((section: ResearchSection)  => section.title).join('\n')}`, response)
+      const status2 = await llmUtils.generateStatusUpdate(this.engine.getId(), this.model, `The plan is completed. Proceeding with generating content for the following sections:\n${sections.map((section: ResearchSection)  => section.title).join('\n')}`)
+      response.appendText({ type: 'content', text: status2 + '\n\n', done: false })
+      response.transient = true
 
       // now build each sections
       const searchResults: SearchResultItem[][] = await Promise.all(
@@ -124,7 +120,7 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
             section.queries.map(async (query: string) => {
 
               // call plugin directly
-              const search = new SearchPlugin(this.config.plugins.search)
+              const search = new SearchPlugin(this.config.plugins.search, this.workspaceId)
 
               // fake tool call
               const seachToolCall = {
@@ -167,7 +163,9 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
       const allKeyLearnings: string[] = []
 
       // status
-      await this.generateStatusUpdate(`I have gathered information for all sections. I am going to analyze the information and generate content for each section.`, response)
+      const status3 = await llmUtils.generateStatusUpdate(this.engine.getId(), this.model, `I have gathered information for all sections. I am going to analyze the information and generate content for each section.`)
+      response.appendText({ type: 'content', text: status3 + '\n\n', done: false })
+      response.transient = true
 
       // add empty checkbox for each section
       for (const section of sections) {
@@ -184,7 +182,7 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
         sections.map(async (section: ResearchSection, index: number) => {
 
           // now we can run the analysis agent on the results
-          const analyzer = new Runner(this.config, dr.analysisAgent)
+          const analyzer = new AgentWorkflowExecutor(this.config, this.workspaceId, dr.analysisAgent)
           const analysis = await analyzer.run('workflow', dr.analysisAgent.buildPrompt(0, {
             sectionObjective: section.description,
             rawInformation: searchResults[index].reduce((acc, result) => acc + `\n${result.title}\n${result.content}\n`, ''),
@@ -200,7 +198,7 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
           // extract learnings
           let keyLearnings: string[] = []
           try {
-            keyLearnings = this.parseJson(analysisMessage.content).learnings
+            keyLearnings = LlmUtils.parseJson(analysisMessage.content).learnings
           } catch (e) {
             console.error('Error parsing key learnings:', analysisMessage.content, e)
             keyLearnings = searchResults[index].map(result => `- ${result.title}: ${result.content}`)
@@ -210,12 +208,12 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
           allKeyLearnings.push(...keyLearnings)
 
           // check if are aborted
-          if (this.abortController?.signal.aborted) {
+          if (opts.abortSignal?.aborted) {
             return ''
           }
 
           // now we can run the section agent to generate the section content
-          const sectionGenerator = new Runner(this.config, dr.writerAgent)
+          const sectionGenerator = new AgentWorkflowExecutor(this.config, this.workspaceId, dr.writerAgent)
           const sectionContent = await sectionGenerator.run('workflow', dr.writerAgent.buildPrompt(0, {
             sectionNumber: index + 1,
             sectionTitle: section.title,
@@ -240,10 +238,12 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
       )
 
       // exec summary and conclusion
-      await this.generateStatusUpdate(`Let me put the final touches`, response)
+      const status4 = await llmUtils.generateStatusUpdate(this.engine.getId(), this.model, `Let me put the final touches`)
+      response.appendText({ type: 'content', text: status4 + '\n\n', done: false })
+      response.transient = true
 
       // run agents
-      const synthesis = new Runner(this.config, dr.synthesisAgent)
+      const synthesis = new AgentWorkflowExecutor(this.config, this.workspaceId, dr.synthesisAgent)
       const execSummary = await synthesis.run('workflow', dr.synthesisAgent.buildPrompt(0, {
         researchTopic: researchTopic,
         keyLearnings: allKeyLearnings.join('\n'),
@@ -255,19 +255,51 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
         outputType: 'conclusion',
       }), { ephemeral: true, ...opts })
 
+      // generate title
+      const status5 = await llmUtils.generateStatusUpdate(this.engine.getId(), this.model, `Generating title for the report`)
+      response.appendText({ type: 'content', text: status5 + '\n\n', done: false })
+      response.transient = true
+      const titleExecutor = new AgentWorkflowExecutor(this.config, this.workspaceId, dr.titleAgent)
+      const titleResult = await titleExecutor.run('workflow', dr.titleAgent.buildPrompt(0, {
+        researchTopic: researchTopic,
+        keyLearnings: allKeyLearnings,
+      }), { ephemeral: true, ...opts })
+      
+      // extract title from the result
+      const titleMessage = titleResult.messages[titleResult.messages.length - 1]
+      let reportTitle = researchTopic // fallback title
+      try {
+        const titleData = LlmUtils.parseJson(titleMessage.content)
+        if (titleData && titleData.title) {
+          reportTitle = titleData.title
+        }
+      } catch {
+        console.warn('Failed to parse title, using research topic as fallback')
+      }
+
       // status
-      await this.generateStatusUpdate(`Done! Here is your report`, response)
+      const status6 = await llmUtils.generateStatusUpdate(this.engine.getId(), this.model, `Done! Here is your report`)
+      response.appendText({ type: 'content', text: status6 + '\n\n', done: false })
+      response.transient = true
 
       // append usages
       const execSummaryMessage = execSummary.messages[execSummary.messages.length - 1]
       const conclusionMessage = conclusion.messages[conclusion.messages.length - 1]
       response.usage = addUsages(response.usage, execSummaryMessage.usage)
       response.usage = addUsages(response.usage, conclusionMessage.usage)
+      response.usage = addUsages(response.usage, titleMessage.usage)
 
       // executive summary
       response.appendText({
         type: 'content',
-        text: `\n\n---\n\n${execSummaryMessage.content}`,
+        text: `\n\n<artifact title="${reportTitle}">`,
+        done: false,
+      })
+
+      // executive summary
+      response.appendText({
+        type: 'content',
+        text: `${execSummaryMessage.content}`,
         done: false,
       })
 
@@ -306,7 +338,7 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
       // done
       response.appendText({
         type: 'content',
-        text: '',
+        text: '</artifact>',
         done: true,
       })
 
@@ -331,64 +363,6 @@ export default class DeepResearchMultiStep implements dr.DeepResearch {
 
     }
 
-  }
-
-  private generateStatusUpdate = async (prompt: string, response: Message): Promise<void> => {
-
-    const statusUpdateInstructions = `You are a status update generator, your task is to generate a status update for the user based on the following prompt.
-
-    The larger task is to create a comprehensive research report, so the status update should reflect the progress made so far.
-
-    The status update should be concise, informative, and provide a clear overview of the current state of the research.
-    
-    Examples of status updates:
-    - "Let me analyze your request about quantum mechanics and create a research plan."
-    - "I am done with the planning phase, I will now start gathering information for the following sections: Quantum Entanglement, Quantum Computing, and Quantum Cryptography."
-    - "I have gathered information for the Quantum Entanglement section, I will now analyze it and extract key learnings."
-
-    Notice none of those examples exceed 2 sentences and include "Status Update:" or any dumb text like that.
-    `
-
-    // check before generating
-    if (this.abortController?.signal.aborted) {
-      throw new AbortError()
-    }
-
-    const usage = response.usage
-
-    const generator = new Generator(this.config) 
-    this.generators.push(generator)
-    await generator.generate(this.engine, [
-      new Message('system', statusUpdateInstructions),
-      new Message('user', prompt),
-      response,
-    ], { model: this.model, tools: false, })
-    this.generators = this.generators.filter(g => g !== generator)
-
-    response.usage = addUsages(usage, response.usage)
-
-    // check before generating
-    if (this.abortController?.signal.aborted) {
-      throw new AbortError()
-    }
-
-    // update response
-    response.transient = true
-    response.appendText({
-      type: 'content',
-      text: '\n\n',
-      done: false
-    })
-  }
-
-  private parseJson = (content: string): any => {
-    let idx = content.indexOf('{')
-    if (idx === -1) throw new Error('No JSON object found in content')
-    content = content.slice(idx)
-    idx = content.lastIndexOf('}')
-    if (idx === -1) throw new Error('No JSON object found in content')
-    content = content.slice(0, idx + 1).trim()
-    return JSON.parse(content)
   }
 
 }

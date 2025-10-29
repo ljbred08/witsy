@@ -5,6 +5,16 @@ import installExtension, { VUEJS_DEVTOOLS } from 'electron-devtools-installer';
 import Store from 'electron-store';
 import log from 'electron-log/main';
 
+// Prevent EPIPE errors from crashing the app
+process.on('uncaughtException', (error) => {
+  if (error.message?.includes('EPIPE') || error.message?.includes('EBADF')) {
+    // Silently ignore pipe errors
+    return;
+  }
+  // Log other errors to file only
+  log.error('Uncaught exception:', error);
+});
+
 import AutoUpdater from './main/autoupdate';
 import Automator from './automations/automator';
 import Commander from './automations/commander';
@@ -19,21 +29,31 @@ import Scheduler from './main/scheduler';
 import Mcp from './main/mcp';
 
 import { fixPath } from './main/utils';
-import { useI18n } from './main/i18n';
+//import { useI18n } from './main/i18n';
+import { HttpServer } from './main/http_server';
 import { installIpc } from './main/ipc';
 import { importOpenAI } from './main/import_oai';
+import { installHttpTriggers } from './main/http_triggers';
+import { installAgentWebhook } from './main/agent_webhook';
+import { installApiEndpoints } from './main/http_api';
+import { checkAndInstallCLI } from './main/cli_installer';
 
 import * as config from './main/config';
 import * as shortcuts from './main/shortcuts';
 import * as window from './main/window';
 import * as menu from './main/menu';
 import * as backup from './main/backup';
+import * as workspace from './main/workspace';
+import * as webview from './main/webview';
 
-let mcp: Mcp = null
-let scheduler: Scheduler = null;
+let mcp: Mcp;
+let scheduler: Scheduler;
+let autoUpdater: AutoUpdater;
+let docMonitor: DocumentMonitor;
+let trayIconManager: TrayIconManager;
 
 // first-thing: single instance
-// on darwin/mas this is done through Info.plist (LSMultipleInstancesProhibited)
+// on darwin this is done through Info.plist (LSMultipleInstancesProhibited)
 if (process.platform !== 'darwin' && !process.env.TEST) {
   const gotTheLock = app.requestSingleInstanceLock();
   if (!gotTheLock) {
@@ -44,28 +64,40 @@ if (process.platform !== 'darwin' && !process.env.TEST) {
 
 // changes path
 if (process.env.WITSY_HOME) {
-  app.getPath = (name: string) => `${process.env.WITSY_HOME}/${name}`;
+  const originalGetPath = app.getPath;
+  app.getPath = (name: string) => {
+    if (name === 'userData') {
+      return process.env.WITSY_HOME;
+    } else {
+      return originalGetPath(name as any);
+    }
+  }
 }
 
-// set up logging
+// set up logging - wrap console transport to prevent EPIPE errors
+const originalConsoleFn = log.transports.console.writeFn;
+log.transports.console.writeFn = function(data: any) {
+  try {
+    originalConsoleFn(data);
+  } catch {
+    // Silently ignore all console write errors (EPIPE, EBADF, etc)
+  }
+};
+
 Object.assign(console, log.functions);
 log.eventLogger.startLogging();
-console.log('Log file:',log.transports.file.getFile().path);
+
+try {
+  console.log('Log file:',log.transports.file.getFile().path);
+} catch {
+  // Ignore if this fails
+}
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 if (require('electron-squirrel-startup')) {
   app.quit();
 }
-
-// auto-update
-const autoUpdater = new AutoUpdater(app, {
-  preInstall: () => quitAnyway = true,
-  onUpdateAvailable: () => {
-    window.notifyBrowserWindows('update-available');
-    trayIconManager.install();
-  },
-});
 
 // open store
 const store = new Store({ name: 'window' });
@@ -79,13 +111,13 @@ const installMenu = () => {
     checkForUpdates: autoUpdater.check,
     quickPrompt: PromptAnywhere.open,
     openMain: window.openMainWindow,
-    scratchpad: window.openScratchPad,
+    scratchpad: () => window.openMainWindow({ queryParams: { view: 'scratchpad' } }),
     settings: window.openSettingsWindow,
     studio: window.openDesignStudioWindow,
     forge: window.openAgentForgeWindow,
     backupExport: async () => await backup.exportBackup(app),
     backupImport: async () => await backup.importBackup(app, quitApp),
-    importOpenAI: async () => await importOpenAI(app),
+    importOpenAI: async () => await importOpenAI(app, settings.workspaceId),
   }, settings.shortcuts);
 }
 
@@ -97,7 +129,7 @@ const registerShortcuts = () => {
     command: () => Commander.initCommand(app),
     readaloud: () => ReadAloud.read(app),
     transcribe: Transcriber.initTranscription,
-    scratchpad: window.openScratchPad,
+    scratchpad: () => window.openMainWindow({ queryParams: { view: 'scratchpad' } }),
     realtime: window.openRealtimeChatWindow,
     studio: window.openDesignStudioWindow,
     forge: window.openAgentForgeWindow,
@@ -110,12 +142,6 @@ const quitApp = () => {
   quitAnyway = true;
   app.quit();
 }
-
-//  tray icon
-const trayIconManager = new TrayIconManager(app, autoUpdater, quitApp);
-
-// document monitor (will be initialized in app.on('ready'))
-let docMonitor: DocumentMonitor;
 
 // this needs to be done before onReady
 if (process.platform === 'darwin') {
@@ -143,8 +169,15 @@ app.whenReady().then(async () => {
   // we need settings
   const settings = config.loadSettings(app);
 
+  // initialize current workspace
+  workspace.initializeWorkspace(app, settings.workspaceId)
+
+  // initialize webview session
+  webview.initWebviewSession()
+
   // error
   if (config.settingsFileHadError()) {
+    const { useI18n } = await import('./main/i18n');
     const t = useI18n(app)
     dialog.showMessageBox({
       type: 'error',
@@ -170,6 +203,31 @@ app.whenReady().then(async () => {
   // set theme
   nativeTheme.themeSource = settings.appearance.theme;
 
+  // we need an http server
+  const httpServer = HttpServer.getInstance();
+  await httpServer.ensureServerRunning();
+
+  // install HTTP triggers
+  try {
+    installHttpTriggers(httpServer, app);
+  } catch (error) {
+    console.error('Error installing HTTP triggers:', error);
+  }
+
+  // auto-updater (we need it now for menu)
+  autoUpdater = new AutoUpdater(app, {
+    preInstall: () => {
+      quitApp();
+    },
+    onUpdateAvailable: () => {
+      window.notifyBrowserWindows('update-available');
+      trayIconManager.install();
+    },
+  });
+
+  // tray icon
+  trayIconManager = new TrayIconManager(app, autoUpdater, quitApp);  
+  
   // install the menu
   window.addWindowListener({
     onWindowCreated: () => setTimeout(installMenu, 500), 
@@ -183,15 +241,14 @@ app.whenReady().then(async () => {
   registerShortcuts();
 
   // start mcp
-  if (!process.mas) {
-    await fixPath()
-    mcp = new Mcp(app);
-    mcp.connect();
-  }
+  await fixPath()
+  mcp = new Mcp(app);
+  mcp.connect();
 
-  // and now scheduler
-  scheduler = new Scheduler(app, mcp);
-  scheduler.start();
+  // check and install CLI (skip in DEBUG mode)
+  if (!process.env.DEBUG) {
+    await checkAndInstallCLI(false);
+  }
 
   // create the main window
   if (!settings.general.hideOnStartup || process.env.TEST) {
@@ -247,13 +304,31 @@ app.whenReady().then(async () => {
   // install IPC handlers
   installIpc(store, autoUpdater, docRepo, memoryManager, mcp, installMenu, registerShortcuts, quitApp);
 
+  // install API endpoints
+  try {
+    installApiEndpoints(httpServer, app, mcp, docRepo);
+  } catch (error) {
+    console.error('Error installing API endpoints:', error);
+  }
+
+  // install agent webhook
+  try {
+    installAgentWebhook(httpServer, app, mcp, docRepo);
+  } catch (error) {
+    console.error('Error installing agent webhook:', error);
+  }
+
+  // and now scheduler
+  scheduler = new Scheduler(app, mcp, docRepo);
+  scheduler.start();
+
   // we want some windows to be as fast as possible
   if (!process.env.TEST) {
     window.prepareMainWindow();
     window.preparePromptAnywhere();
     window.prepareCommandPicker();
   }
-  
+
 });
 
 // called when the app is already running

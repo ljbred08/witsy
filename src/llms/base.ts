@@ -329,7 +329,7 @@ export default class LlmManagerBase implements ILlmManager {
   
   }
 
-  checkModelListsVersion(): void {
+  checkModelsCapabilities(): void {
 
     // iterate on all engines
     let updated = false
@@ -383,6 +383,14 @@ export default class LlmManagerBase implements ILlmManager {
 
     // openai names are not great
     if (engine === 'openai') {
+
+
+      // filter
+      if (store.config.engines.openai.hideDatedModels) {
+        models.chat = models.chat.filter(m => !m.id.match(/\d{4}-\d{2}-\d{2}$/i))
+      }
+
+      // names
       models.chat = models.chat.map(m => {
         let name = m.name
         name = name.replace(/^gpt-([^-]*)(-?)([a-z]?)/i, (_, l1, __, l3) => `GPT-${l1} ${l3?.toUpperCase()}`)
@@ -392,11 +400,29 @@ export default class LlmManagerBase implements ILlmManager {
         name = name.replace(/-(\d\d\d\d-\d\d-\d\d)$/i, (_ ,l1) => ` ${l1}`)
         return { id: m.id, name, capabilities: m.capabilities, meta: m.meta }
       })
-      models.image = models.image.map(m => {
+      models.image = models.image?.map(m => {
         let name = m.name
         name = name.replace(/^dall-e-/i, 'DALL-E ')
         name = name.replace(/^gpt-image-/i, 'GPT Image ')
         return { id: m.id, name, meta: m.meta }
+      })
+      models.video = models.video?.map(m => {
+        let name = m.name
+        name = name.replace(/^sora-/i, 'Sora ')
+        name = name.replace(/-pro$/i, ' Pro')
+        return { id: m.id, name, meta: m.meta }
+      })
+    }
+
+    // google are worse
+    if (engine === 'google') {
+      models.chat = models.chat.filter(m => !m.id.includes('-1.5-') && !m.id.includes('-2.0-') && m.id !== 'gemini-exp-1206')
+      models.chat = models.chat.sort((a, b) => {
+        if (a.id.includes('gemini') && !b.id.includes('gemini')) return -1
+        if (!a.id.includes('gemini') && b.id.includes('gemini')) return 1
+        if (a.id.includes('preview') && !b.id.includes('preview')) return 1
+        if (!a.id.includes('preview') && b.id.includes('preview')) return -1
+        return 0
       })
     }
 
@@ -445,7 +471,7 @@ export default class LlmManagerBase implements ILlmManager {
     engineConfig.model[type] = models[0].id
   }
 
-  loadTools = async (engine: llm.LlmEngine, availablePlugins: PluginsList, toolSelection: ToolSelection): Promise<void> => {
+  loadTools = async (engine: llm.LlmEngine, workspaceId: string, availablePlugins: PluginsList, toolSelection: ToolSelection): Promise<void> => {
 
     // clear
     engine.clearPlugins()
@@ -460,7 +486,7 @@ export default class LlmManagerBase implements ILlmManager {
     for (const pluginName in availablePlugins) {
       
       const pluginClass = availablePlugins[pluginName]
-      const plugin: PluginInstance = new pluginClass(this.config.plugins[pluginName])
+      const plugin: PluginInstance = new pluginClass(this.config.plugins[pluginName], workspaceId)
 
       // if no filters add
       if (areAllToolsEnabled(toolSelection)) {

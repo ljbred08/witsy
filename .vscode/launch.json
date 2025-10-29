@@ -27,9 +27,9 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "Launch Tools",
-      "program": "${workspaceFolder}/node_modules/.bin/ts-node",
-      "args": [ "${relativeFile}", "it", "Italian" ],
+      "name": "CLI",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["ts-node", "./src/cli/main.ts"],
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
       "console": "integratedTerminal"
     }

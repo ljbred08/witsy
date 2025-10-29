@@ -1,8 +1,8 @@
-import { LlmEngine, LlmCompletionOpts, LlmChunk, LlmResponse, Model } from 'multi-llm-ts'
+import { LlmChunk, LlmCompletionOpts, LlmEngine, LlmResponse, Model } from 'multi-llm-ts'
+import Message from '../models/message'
 import { Configuration, EngineConfig } from '../types/config'
 import { DocRepoQueryResponseItem } from '../types/rag'
-import { t , i18nInstructions, localeToLangName, getLlmLocale } from './i18n'
-import Message from '../models/message'
+import { i18nInstructions, t } from './i18n'
 
 export type GenerationEvent = 'before_generation' | 'plugins_disabled' | 'before_title' | 'generation_done'
 
@@ -26,6 +26,7 @@ export type GenerationResult =
   'quota_exceeded' |
   'context_too_long' |
   'invalid_model' |
+  'invalid_budget' |
   'function_description_too_long' |
   'function_call_not_supported' |
   'streaming_not_supported' |
@@ -34,18 +35,9 @@ export type GenerationResult =
 export default class Generator {
 
   config: Configuration
-  stopGeneration: boolean
-  stream: AsyncIterable<LlmChunk>|null
-  llm: LlmEngine|null
-
-  static addCapabilitiesToSystemInstr = true
-  static addDateAndTimeToSystemInstr = true
 
   constructor(config: Configuration) {
     this.config = config
-    this.stream = null
-    this.stopGeneration = false
-    this.llm = null
   }
 
   async generate(llm: LlmEngine, messages: Message[], opts: GenerationOpts, llmCallback?: LlmChunkCallback): Promise<GenerationResult> {
@@ -62,7 +54,7 @@ export default class Generator {
     const model = engineConfig?.models?.chat?.find((m: Model) => m.id === opts.model)
     const visionModel = engineConfig?.models?.chat?.find((m: Model) => m.id === engineConfig.model?.vision)
     if (!model) {
-      console.error('Model not found:', llm.getName(), opts.model)
+      response.setText(t('generator.errors.invalidModel'))
       return 'invalid_model'
     }
 
@@ -127,33 +119,37 @@ export default class Generator {
       } else {
 
         // now stream
-        this.stopGeneration = false
-        this.stream = llm.generate(model, conversation, {
+        const stream = llm.generate(model, conversation, {
           visionFallbackModel: visionModel,
           usage: true,
           ...opts
         })
-        for await (const msg of this.stream) {
-          if (this.stopGeneration) {
-            response.appendText({ type: 'content', text: '', done: true })
-            rc = 'stopped'
-            break
-          }
-          if (msg.type === 'usage') {
-            response.usage = msg.usage
-          } else if (msg.type === 'tool') {
-            response.addToolCall(msg, opts.noToolsInContent ? false : true)
-            llmCallback?.call(null, msg)
-          } else if (msg.type === 'content') {
-            if (msg && sources && sources.length > 0) {
-              msg.done = false
+
+        // we need this to catch errors in the for-await loop
+         
+        try {
+          for await (const msg of stream) {
+            // Engine will stop if signal aborted
+            if (msg.type === 'usage') {
+              response.usage = msg.usage
+              llmCallback?.call(null, msg)
+            } else if (msg.type === 'tool') {
+              response.addToolCall(msg, opts.noToolsInContent ? false : true)
+              llmCallback?.call(null, msg)
+            } else if (msg.type === 'content') {
+              if (msg && sources && sources.length > 0) {
+                msg.done = false
+              }
+              response.appendText(msg)
+              llmCallback?.call(null, msg)
+            } else if (msg.type === 'reasoning') {
+              response.appendText(msg)
+              llmCallback?.call(null, msg)
             }
-            response.appendText(msg)
-            llmCallback?.call(null, msg)
-          } else if (msg.type === 'reasoning') {
-            response.appendText(msg)
-            llmCallback?.call(null, msg)
           }
+        } catch (error) {
+          rc = await this.handleError(error, llm, messages, opts, response, llmCallback)
+          return rc
         }
 
       }
@@ -176,123 +172,146 @@ export default class Generator {
       }
 
     } catch (error) {
-      console.error('Error while generating text', error)
+      
+      rc = await this.handleError(error, llm, messages, opts, response, llmCallback)
+    
+    } finally {
 
-      if (error.name !== 'AbortError') {
-
-        // get the error message
-        const cause = error.cause?.stack?.toString()?.toLowerCase() || ''
-        const message = error.message.toLowerCase()
-
-        // best case status is the http status code
-        // if not we can try to find it in the message
-        let status = error.status ?? error.status_code ?? 0
-        if (status === 0) {
-          // extract from message with \d\d\d
-          const statusMatch = message.match(/\b(\d{3})\b/)
-          if (statusMatch) {
-            status = parseInt(statusMatch[0])
-          }
-        }
-
-        // proxy
-        if (!error.status && (cause.includes('proxy') || cause.includes('network'))) {
-          console.error('Network error:', cause)
-          response.setText(t('generator.errors.networkError'))
-          rc = 'error'
-        }
-        
-        // missing api key
-        else if ([401, 403].includes(status) || message.includes('401') || message.includes('apikey')) {
-          console.error('Missing API key:', status, message)
-          response.setText(t('generator.errors.missingApiKey'))
-          rc = 'missing_api_key'
-        }
-        
-        // out of credits
-        else if ([400, 402].includes(status) && (message.includes('credit') || message.includes('balance'))) {
-          console.error('Out of credits:', status, message)
-          response.setText(t('generator.errors.outOfCredits'))
-          rc = 'out_of_credits'
-        
-        // quota exceeded
-        } else if ([429].includes(status) && (message.includes('resource') || message.includes('quota') || message.includes('rate limit') || message.includes('too many'))) {
-          console.error('Quota exceeded:', status, message)
-          response.setText(t('generator.errors.quotaExceeded'))
-          rc = 'quota_exceeded'
-
-        // context length or function description too long
-        } else if ([400, 429].includes(status) && (message.includes('context length') || message.includes('too long') || message.includes('too large'))) {
-          if (message.includes('function.description')) {
-            console.error('Function description too long:', status, message)
-            response.setText(t('generator.errors.pluginDescriptionTooLong'))
-            rc = 'function_description_too_long'
-          } else {
-            console.error('Context too long:', status, message)
-            response.setText(t('generator.errors.contextTooLong'))
-            rc = 'context_too_long'
-          }
-        
-        // function call not supported
-        } else if ([400, 404].includes(status) && llm.plugins.length > 0 && (message.includes('function call') || message.includes('tools') || message.includes('tool calling') || message.includes('tool use') || message.includes('tool choice'))) {
-          console.warn('Model does not support function calling:', status, message)
-          llm.clearPlugins()
-          return this.generate(llm, messages, opts, llmCallback)
-
-        // streaming not supported
-        } else if ([400].includes(status) && message.includes('\'stream\' does not support true')) {
-          console.warn('Model does not support streaming:', status, message)
-          rc = 'streaming_not_supported'
-
-        // invalid model
-        } else if ([404].includes(status) && message.includes('model')) {
-          console.error('Provider reports invalid model:', status, message)
-          response.setText(t('generator.errors.invalidModel'))
-          rc = 'invalid_model'
-
-        // final error: depends if we already have some content and if plugins are enabled
-        } else {
-          console.error('Error while generating text:', status, message)
-          if (response.content === '') {
-            if (opts?.contextWindowSize || opts?.maxTokens || opts?.temperature || opts?.top_k || opts?.top_p || Object.keys(opts?.customOpts || {}).length > 0) {
-              response.setText(t('generator.errors.tryWithoutParams'))
-            } else if (llm.plugins.length > 0) {
-              response.setText(t('generator.errors.tryWithoutPlugins'))
-            } else {
-              response.setText(t('generator.errors.couldNotGenerate'))
-            }
-          } else {
-            response.appendText({ type: 'content', text: t('generator.errors.cannotContinue'), done: true })
-          }
-          rc = 'error'
-        }
-      } else {
-        llmCallback?.call(null, { type: 'content', text: null, done: true })
+      // make sure the message is terminated correctly
+      // https://github.com/nbonamy/witsy/issues/104
+      if (response.transient) {
+        console.warn('Response is still transient. Appending empty text.')
+        response.appendText({ type: 'content', text: '', done: true })
       }
-    }
 
-    // make sure the message is terminated correctly
-    // https://github.com/nbonamy/witsy/issues/104
-    if (response.transient) {
-      console.warn('Response is still transient. Appending empty text.')
-      response.appendText({ type: 'content', text: '', done: true })
     }
-
-    // cleanup
-    this.stream = null
-    //callback?.call(null, null)
 
     // done
     return rc
 
   }
 
-  async stop() {
-    if (this.stream) {
-      this.stopGeneration = true
-      try {
-        await this.llm?.stop(this.stream)
-      } catch { /* empty */ }
+  private async handleError(
+    error: any,
+    llm: LlmEngine,
+    messages: Message[],
+    opts: GenerationOpts,
+    response: Message,
+    llmCallback?: LlmChunkCallback
+  ): Promise<GenerationResult> {
+
+    console.error('Error while generating text', error)
+
+    if (error.name !== 'AbortError') {
+
+      // get the error message
+      const cause = error.cause?.stack?.toString()?.toLowerCase() || ''
+      const message = error.message.toLowerCase()
+
+      // best case status is the http status code
+      // if not we can try to find it in the message
+      let status = error.status ?? error.status_code ?? 0
+      if (status === 0) {
+        // extract from message with \d\d\d
+        const statusMatch = message.match(/\b(\d{3})\b/)
+        if (statusMatch) {
+          status = parseInt(statusMatch[0])
+        }
+      }
+
+      // proxy
+      if (!error.status && (cause.includes('proxy') || cause.includes('network'))) {
+        console.error('Network error:', cause)
+        response.setText(t('generator.errors.networkError', { error: error.message }))
+        return 'error'
+      }
+
+      // missing api key
+      else if ([401, 403].includes(status) || message.includes('401') || message.includes('apikey')) {
+        console.error('Missing API key:', status, message)
+        response.setText(t('generator.errors.missingApiKey', { error: error.message }))
+        return 'missing_api_key'
+      }
+
+      // out of credits
+      else if ([400, 402].includes(status) && (message.includes('credit') || message.includes('balance'))) {
+        console.error('Out of credits:', status, message)
+        response.setText(t('generator.errors.outOfCredits', { error: error.message }))
+        return 'out_of_credits'
+
+      // quota exceeded
+      } else if ([413, 429].includes(status) && (message.includes('resource') || message.includes('quota') || message.includes('rate limit') || message.includes('too many') || message.includes('tokens per minute'))) {
+        console.error('Quota exceeded:', status, message)
+        response.setText(t('generator.errors.quotaExceeded', { error: error.message }))
+        return 'quota_exceeded'
+
+      // context length or function description too long
+      } else if ([400, 429].includes(status) && (message.includes('context length') || message.includes('too long') || message.includes('too large'))) {
+        if (message.includes('function.description')) {
+          console.error('Function description too long:', status, message)
+          response.setText(t('generator.errors.pluginDescriptionTooLong', { error: error.message }))
+          return 'function_description_too_long'
+        } else {
+          console.error('Context too long:', status, message)
+          response.setText(t('generator.errors.contextTooLong'))
+          return 'context_too_long'
+        }
+
+      // function call not supported
+      } else if ([400, 404].includes(status) && llm.plugins.length > 0 && (message.includes('function call') || message.includes('tools') || message.includes('tool calling') || message.includes('tool use') || message.includes('tool choice'))) {
+        console.warn('Model does not support function calling:', status, message)
+        llm.clearPlugins()
+        return this.generate(llm, messages, opts, llmCallback)
+
+      // streaming not supported
+      } else if ([400].includes(status) && message.includes('\'stream\' does not support true')) {
+        console.warn('Model does not support streaming:', status, message)
+        return 'streaming_not_supported'
+
+      // invalid model
+      } else if ([404].includes(status) && message.includes('model')) {
+        console.error('Provider reports invalid model:', status, message)
+        response.setText(t('generator.errors.invalidModel', { error: error.message }))
+        return 'invalid_model'
+
+      // thinking cannot be disabled
+      } else if ([400].includes(status) && message.includes('only works in thinking mode')) {
+        console.error('Invalid budget:', status, message)
+        response.setText(t('generator.errors.onlyThinkingMode', { error: error.message }))
+        return 'invalid_budget'
+
+      // invalid budget
+      } else if ([400].includes(status) && message.includes('thinking budget')) {
+        console.error('Invalid budget:', status, message)
+        const match = message.match(/between (\d*) and (\d*)/)
+        if (match) {
+          const min = parseInt(match[1], 10)
+          const max = parseInt(match[2], 10)
+          response.setText(t('generator.errors.invalidBudgetKnown', { min, max }))
+        } else {
+          response.setText(t('generator.errors.invalidBudgetUnknown', { error: error.message }))
+        }
+        return 'invalid_budget'
+
+      // final error: depends if we already have some content and if plugins are enabled
+      } else {
+        console.error('Error while generating text:', status, message)
+        if (response.content === '') {
+          if (opts?.contextWindowSize || opts?.maxTokens || opts?.temperature || opts?.top_k || opts?.top_p || Object.keys(opts?.customOpts || {}).length > 0) {
+            response.setText(t('generator.errors.tryWithoutParams', { error: error.message }))
+          } else if (llm.plugins.length > 0) {
+            response.setText(t('generator.errors.tryWithoutPlugins', { error: error.message }))
+          } else {
+            response.setText(t('generator.errors.couldNotGenerate', { error: error.message }))
+          }
+        } else {
+          response.appendText({ type: 'content', text: t('generator.errors.cannotContinue', { error: error.message }), done: true })
+        }
+        return 'error'
+      }
+    } else {
+      llmCallback?.call(null, { type: 'content', text: null, done: true })
+      return 'stopped'
     }
   }
 
@@ -311,42 +330,6 @@ export default class Generator {
       }
     }
     return conversation
-  }
-
-  getSystemInstructions(instructions?: string): string {
-
-    // default
-    let instr = instructions
-    if (!instr) {
-      // Check if it's a custom instruction
-      const customInstruction = this.config.llm.customInstructions?.find((ci: any) => ci.id === this.config.llm.instructions)
-      if (customInstruction) {
-        instr = customInstruction.instructions
-      } else {
-        instr = i18nInstructions(this.config, `instructions.chat.${this.config.llm.instructions}`)
-      }
-    }
-
-    // forced locale
-    if (/*instr === i18nInstructions(null, `instructions.chat.${this.config.llm.instructions}`) && */this.config.llm.forceLocale) {
-      const lang = localeToLangName(getLlmLocale())
-      if (lang.length) {
-        instr += '\n\n' + i18nInstructions(this.config, 'instructions.utils.setLang', { lang })
-      }
-    }
-
-    // add info about capabilities
-    if (Generator.addCapabilitiesToSystemInstr) {
-      instr += '\n\nIf you are asked to output a Mermaid chart, its code will be rendered as a diagram to the user.'
-    }
-
-    // add date and time
-    if (Generator.addDateAndTimeToSystemInstr) {
-      instr += '\n\n' + i18nInstructions(this.config, 'instructions.utils.setDate', { date: new Date().toLocaleString() })
-    }
-
-    // done
-    return instr
   }
 
 }

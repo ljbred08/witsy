@@ -1,8 +1,8 @@
 
 <template>
   <div class="wrapper">
-    <BIconChatLeft class="chat" />
-    <BIconPlus class="plus"/>
+    <MessageCircleIcon class="chat" />
+    <PlusIcon class="plus"/>
   </div>
 </template>
 
@@ -14,8 +14,8 @@
 .wrapper {
   
   position: relative;
-  width: 1rem;
-  height: 1rem;
+  width: var(--icon-md);
+  height:var(--icon-md);
   display: flex;
   justify-content: center;
   align-items: center;

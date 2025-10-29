@@ -10,12 +10,6 @@ export default class ReadAloud {
 
   static read = async (app: App, timeout?: number): Promise<void> => {
 
-    // not available in mas
-    if (process.mas) {
-      window.showMasLimitsDialog()
-      return
-    }
-
     // localization
     const t = useI18n(app);
 
@@ -27,7 +21,7 @@ export default class ReadAloud {
     if (text == null) {
       try {
         new Notification({
-          title: 'Witsy',
+          title: t('common.appName'),
           body: t('automation.grabError')
         }).show()
       } catch (error) {
@@ -40,7 +34,7 @@ export default class ReadAloud {
     if (text.trim() === '') {
       try {
         new Notification({
-          title: 'Witsy',
+          title: t('common.appName'),
           body: t('automation.readAloud.emptyText')
         }).show()
         console.log('No text selected');

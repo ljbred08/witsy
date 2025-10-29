@@ -1,13 +1,13 @@
-import { vi, beforeAll, beforeEach, afterAll, expect, test } from 'vitest'
-import { mount, VueWrapper, enableAutoUnmount } from '@vue/test-utils'
-import { useWindowMock } from '../mocks/window'
-import { store } from '../../src/services/store'
-import { tabs, switchToTab } from './settings_utils'
-import Settings from '../../src/screens/Settings.vue'
-import LlmFactory from '../../src/llms/llm'
+import { enableAutoUnmount, mount, VueWrapper } from '@vue/test-utils'
 import { defaultCapabilities } from 'multi-llm-ts'
-import { findModelSelectoPlus } from '../utils'
-import { CustomInstruction } from '../../src/types/config'
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from 'vitest'
+import LlmFactory from '../../src/llms/llm'
+import Settings from '../../src/screens/Settings.vue'
+import { store } from '../../src/services/store'
+import { CustomInstruction } from '../../src/types/index'
+import { useWindowMock } from '../mocks/window'
+import { findModelSelectorPlus } from '../utils'
+import { switchToTab, tabs } from './settings_utils'
 
 enableAutoUnmount(afterAll)
 
@@ -81,9 +81,9 @@ test('Settings LLM basic functionality', async () => {
   
   const manager = LlmFactory.manager(store.config)
   const tab = await switchToTab(wrapper, tabs.indexOf('settingsLLM'))
-  expect(tab.findAll('.form-field')).toHaveLength(7)
+  expect(tab.findAll('.form-field')).toHaveLength(10)
   expect(tab.findAll('.form-field.localeLLM select option')).toHaveLength(21)
-  expect(findModelSelectoPlus(wrapper).exists()).toBe(true)
+  expect(findModelSelectorPlus(wrapper).exists()).toBe(true)
   expect(store.config.prompt.engine).toBe('')
   expect(store.config.prompt.model).toBe('')
   expect(tab.findAll('.form-field.quick-prompt select.engine option')).toHaveLength(manager.getStandardEngines().length+1)
@@ -103,12 +103,17 @@ test('Settings LLM basic functionality', async () => {
   vi.clearAllMocks()
   
   // set prompt model
-  const modelSelect = findModelSelectoPlus(tab)
+  const modelSelect = findModelSelectorPlus(tab)
   await modelSelect.open()
   await modelSelect.select(1)
   await wrapper.vm.$nextTick()
   expect(store.config.prompt.model).toBe('model2')
   vi.clearAllMocks()
+
+  // set prompt disable streaming
+  expect(store.config.prompt.disableStreaming).toBe(false)
+  await tab.find('input[name=disableStreaming]').setValue(true)
+  expect(store.config.prompt.disableStreaming).toBe(true)
 
   // set llm locale to french: translation exists so forceLocale is false
   expect(store.config.llm.locale).toBe('')
@@ -152,7 +157,7 @@ test('Settings LLM custom instructions initialization', async () => {
   expect(tab.findAll('.actions button')).toHaveLength(3)
   
   const buttons = tab.findAll('.actions button')
-  expect(buttons[0].text()).toBe('common.add')
+  expect(buttons[0].text()).toBe('common.new')
   expect(buttons[1].text()).toBe('common.edit')
   expect(buttons[2].text()).toBe('common.delete')
   

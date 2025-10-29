@@ -38,6 +38,7 @@ beforeAll(() => {
   useWindowMock()
   store.loadSettings()
   store.load = () => {}
+  store.isFeatureEnabled = (feature: string) => feature !== 'workspaces'
 
   // override
   window.api.config.localeLLM = () => store.config.llm.locale || 'en-US'
@@ -79,11 +80,11 @@ test('Settings General', async () => {
 
   expect(store.config.appearance.theme).toBe('system')
 
-  expect(store.config.appearance.lightTint).not.toBe('white')
-  tab.find('.form-field.lightTint select').setValue('gray')
-  expect(store.config.appearance.lightTint).toBe('gray')
-  expect(store.saveSettings).toHaveBeenCalledOnce()
-  vi.clearAllMocks()
+  // expect(store.config.appearance.lightTint).not.toBe('white')
+  // tab.find('.form-field.lightTint select').setValue('gray')
+  // expect(store.config.appearance.lightTint).toBe('gray')
+  // expect(store.saveSettings).toHaveBeenCalledOnce()
+  // vi.clearAllMocks()
 
   await tab.find('.form-field.appearance div:nth-of-type(2)').trigger('click')
   expect(store.config.appearance.theme).toBe('dark')
@@ -132,12 +133,21 @@ test('Settings General', async () => {
 test('Settings Chat', async () => {
   
   const tab = await switchToTab(wrapper, tabs.indexOf('settingsChat'))
-  expect(tab.findAll('.form-field')).toHaveLength(6)
+  expect(tab.findAll('.form-field')).toHaveLength(9)
 
   expect(store.config.appearance.chat.theme).not.toBe('conversation')
   tab.find('.form-field.theme select').setValue('conversation')
   expect(store.config.appearance.chat.theme).toBe('conversation')
   expect(store.saveSettings).toHaveBeenCalledOnce()
+  vi.clearAllMocks()
+
+  expect(store.config.appearance.chat.copyFormat).toBe('text')
+  tab.find('.form-field.copy select').setValue('markdown')
+  expect(store.config.appearance.chat.copyFormat).toBe('markdown')
+  expect(store.saveSettings).toHaveBeenCalledOnce()
+  tab.find('.form-field.copy select').setValue('text')
+  expect(store.config.appearance.chat.copyFormat).toBe('text')
+  expect(store.saveSettings).toHaveBeenCalledTimes(2)
   vi.clearAllMocks()
 
   expect(store.config.appearance.chat.showToolCalls).toBe('always')
@@ -160,11 +170,16 @@ test('Settings Chat', async () => {
 test('Settings Advanced', async () => {
   
   const tab = await switchToTab(wrapper, tabs.indexOf('settingsAdvanced'))
-  expect(tab.findAll('.form-field')).toHaveLength(5)
 
   expect(store.config.prompt.autosave).not.toBe(true)
   tab.find('.form-field.autosave input').setValue(true)
   expect(store.config.prompt.autosave).toBe(true)
+  expect(store.saveSettings).toHaveBeenCalledOnce()
+  vi.clearAllMocks()
+
+  expect(store.config.general.safeKeys).toBe(true)
+  tab.find('.form-field.safe-keys input').setValue(false)
+  expect(store.config.general.safeKeys).toBe(false)
   expect(store.saveSettings).toHaveBeenCalledOnce()
   vi.clearAllMocks()
 

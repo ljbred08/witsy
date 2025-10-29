@@ -1,16 +1,17 @@
 <template>
   <div class="fullscreen" :class="fullScreenTheme" v-if="fullScreenImageUrl" @click="onCloseFullScreen">
     <img :src="fullScreenImageUrl" alt="Full screen image" />
-    <BIconXLg class="close" @click.stop="onCloseFullScreen" />
+    <XIcon class="close" @click.stop="onCloseFullScreen" />
   </div>
 </template>
 
 <script setup lang="ts">
 
-import { strDict } from '../types/index'
-import { ref, onMounted } from 'vue'
-
+import { XIcon } from 'lucide-vue-next'
+import { onMounted, ref } from 'vue'
 import useEventBus from '../composables/event_bus'
+import { strDict } from '../types/index'
+
 const { onEvent } = useEventBus()
 
 const props = defineProps({
@@ -70,7 +71,7 @@ const onCloseFullScreen = () => {
   position: absolute;
   top: 16px;
   right: 16px;
-  font-size: 14pt;
+  font-size: 18.5px;
 }
 
 .fullscreen.light {

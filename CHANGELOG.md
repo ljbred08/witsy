@@ -2,17 +2,172 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.13.1] - WIP
+## [3.1.0] - WIP
 
 ### Added
+- Agents categories
+- More error reporting
+- Sandboxed python runtime
+- Duplicate agent
+
+### Changed
+- Wider engine/model menu (https://github.com/nbonamy/witsy/issues/463)
+
+### Fixed
+- Chat color with dark mode (https://github.com/nbonamy/witsy/issues/464)
+
+### Removed
 - N/A
+
+
+## [3.0.4] - 2025-10-24
+
+### Added
+- Knowledge plugin to automatically connect knowledge base connections (https://github.com/nbonamy/witsy/issues/450)
+- Set folder default settings dialog (https://github.com/nbonamy/witsy/issues/454)
+- Better error reporting for OpenRouter failures (https://github.com/nbonamy/witsy/issues/458)
 
 ### Changed
 - N/A
 
 ### Fixed
+- Prompt menu not showing in some languages (https://github.com/nbonamy/witsy/issues/455)
+- Bug: Play/Pause and stop button for read aloud is gone (https://github.com/nbonamy/witsy/issues/459)
+- Cannot use Mistral model (https://github.com/nbonamy/witsy/issues/456)
+
+### Removed
+- N/A
+
+
+## [3.0.3] - 2025-10-18
+
+### Added
+- Auth for MCP SSE servers (https://github.com/nbonamy/witsy/issues/442)
+- Custom OpenAI-compatible TTS Endpoints (https://github.com/nbonamy/witsy/issues/449)
+
+### Changed
+- Agent run view redesign
+- Update to new Fireworks Realtime (https://github.com/nbonamy/witsy/issues/446)
+
+### Fixed
+- MCP List Doesn't Scroll when number of servers exceeds page length (https://github.com/nbonamy/witsy/issues/448)
+- Agent Forge not working (https://github.com/nbonamy/witsy/issues/452)
+- Whisper STT error message
+
+### Removed
+- N/A
+
+
+## [3.0.2] - 2025-10-14
+
+### Added
+- Improved chat and agent abort capability
+- Helpful message when search fails
+- Groq and Cerebras reasoning
+
+### Changed
+- Major refactoring of agent system (executor, runner, a2a communication)
+- New DeepResearch execution model
+- Context Menu position calculation
+
+### Fixed
+- N/A
+
+### Removed
+- N/A
+
+
+## [3.0.0] - 2025-10-07
+
+### Added
+- Design Studio drawing
+- Let users choose which tools to enable from each MCP, and persist that choice for all models (https://github.com/nbonamy/witsy/issues/410)
+- Allow selecting and copying text from tool execution results (https://github.com/nbonamy/witsy/issues/421)
+- Support Perplexity Search API (https://github.com/nbonamy/witsy/issues/427)
+- Web 'Apps' (https://github.com/nbonamy/witsy/issues/431)
+- Clear all shortcuts button (https://github.com/nbonamy/witsy/pull/405)
+- add shell.nix (https://github.com/nbonamy/witsy/pull/424)
+- OpenAI: Hide models with explicit release dates
+- Table rendering as artifact, download as CSV and XSLX
+- HTTP Server to control Witsy (see README.md)
+- Agent trigger via webhooks (see README.md)
+- Command line version of Witsy (see README.md)
+- OpenAI Sora video generation
+
+### Changed
+- New UI
+
+### Fixed
+- Incorrect token usage count for Gemini 2.5 Pro (https://github.com/nbonamy/witsy/issues/391)
+- White screen + Delay (https://github.com/nbonamy/witsy/issues/411)
+- When using the fork command, the title field is not filled (https://github.com/nbonamy/witsy/issues/409)
+- Using Tool websearch doesn´t work anymore (https://github.com/nbonamy/witsy/issues/428)
+- For Ollama 'Max Completion Tokens' should allow negative values (https://github.com/nbonamy/witsy/issues/413)
+- Added keep-alive on ollama embeddings (https://github.com/nbonamy/witsy/issues/425)
+- Scopes from OAuth protected resource metadata should be used for DCR (https://github.com/nbonamy/witsy/issues/420)
+- Window freezing (when streaming is enabled) when response text is long (https://github.com/nbonamy/witsy/issues/426)
+- API Key label displayed with Google selected in Video plugin settings
+- Smithery Arg Parsing - Runtime & Install (https://github.com/nbonamy/witsy/issues/435)
+- Better MCP Logs (https://github.com/nbonamy/witsy/issues/436)
+
+### Removed
+- N/A
+
+
+## [2.14.0] - 2025-08-31
+
+### Added
+- HTML Artifacts preview
+- Artifacts download formats (text, markdown, html, pdf)
+- Add Deep Research title generation feature
+- Nano Banana Support
+
+### Changed
+- Support for secure api storage (https://github.com/nbonamy/witsy/issues/407)
+
+### Fixed
+- Design Studio: regional parameter error (personGeneration.allow_all) (https://github.com/nbonamy/witsy/issues/404)
+- Google Models deduplication (trying to work around https://github.com/googleapis/js-genai/issues/803)
+
+### Removed
+- N/A
+
+
+## [2.13.2] - 2025-08-22
+
+### Added
+- Add Support for Anthropic's 'thinking.budget_tokens' Parameter (https://github.com/nbonamy/witsy/issues/392)
+- MCP OAuth support (https://github.com/nbonamy/witsy/issues/398)
+- Preserve markdown when using copy (https://github.com/nbonamy/witsy/issues/400)
+- Improve the date/time value that is passed in system instructions (https://github.com/nbonamy/witsy/issues/401)
+- Add timestamps to the debug console (https://github.com/nbonamy/witsy/issues/402)
+
+### Changed
+- Agentic handling of MCP errors (https://github.com/nbonamy/witsy/issues/366)
+
+### Fixed
+- Expert name display in chat
+- Multiple artifacts display fix, partial artifacts display fix
+
+### Removed
+- N/A
+
+
+## [2.13.1] - 2025-08-13
+
+### Added
+- Artifacts instructions option with specific display mode
+- Show the model that was used for each response (https://github.com/nbonamy/witsy/issues/387)
+- Add Support for Advanced Model Parameters like 'Thinking Mode' and 'Thinking Budget' for Gemini (https://github.com/nbonamy/witsy/issues/385)
+
+### Changed
+- Soniox Real Time and Async Pull Request (https://github.com/nbonamy/witsy/pull/384)
+
+### Fixed
 - Mistral vision does not work (https://github.com/nbonamy/witsy/issues/382)
 - PDF webpage content not extracted )https://github.com/nbonamy/witsy/issues/383)
+- Add a copy button for the user part of the conversation too (https://github.com/nbonamy/witsy/issues/388)
+- Hover selection highlight is smooshed, not centered (https://github.com/nbonamy/witsy/issues/390)
 
 ### Removed
 - N/A

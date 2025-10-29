@@ -1,23 +1,30 @@
 
 import { Configuration } from '../types/config'
-import { Folder, History, Store } from '../types/index'
+import { Folder, History, Store, StoreEvent } from '../types/index'
+import { Workspace } from '../types/workspace'
 import { reactive } from 'vue'
 import { loadCommands } from './commands'
-import { loadExperts } from './experts'
 import { loadAgents } from './agents'
+import { loadExperts, loadCategories } from './experts'
+import features from '../../defaults/features.json'
 import LlmFactory, { ILlmManager } from '../llms/llm'
 import Chat from '../models/chat'
+import LlmManager from 'llms/manager'
 
 export const kMediaChatId = '00000000-0000-0000-0000-000000000000'
+export const kDefaultWorkspaceId = '00000000-0000-0000-0000-000000000000'
 export const kReferenceParamValue = '<media>'
 
 export const store: Store = reactive({
 
   config: {} as Configuration,
-  commands: [], 
+  workspace: {} as Workspace,
+  commands: [],
   experts: [],
+  expertCategories: [],
   agents: [],
   history: null,
+  listeners: {},
   
   rootFolder: {
     id: 'root',
@@ -33,14 +40,58 @@ export const store: Store = reactive({
     transcription: ''
   },
 
+  isFeatureEnabled(feature: string): boolean {
+    const tokens = feature.split('.')
+    let current = (features as Record<string, any>)[tokens[0]]
+    for (let i=1; i<tokens.length; i++) {
+      current = current?.[tokens[i]]
+    }
+    return current !== false
+  },
+
+  addListener: (event: StoreEvent, listener: CallableFunction): void => {
+    if (!store.listeners[event]) {
+      store.listeners[event] = []
+    }
+    store.listeners[event].push(listener)
+  },
+
+  removeListener: (event: StoreEvent, listener: CallableFunction): void => {
+    if (!store.listeners[event]) return
+    store.listeners[event] = store.listeners[event].filter(l => l !== listener)
+  },
+
+  activateWorkspace: async (workspaceId: string): Promise<void> => {
+
+    // update settings
+    store.config.workspaceId = workspaceId
+    store.saveSettings()
+
+    // reload data for the new workspace
+    store.loadWorkspace()
+    store.loadHistory()
+    store.loadExperts()
+    store.loadAgents()
+
+    // notify listeners
+    for (const listener of store.listeners['workspaceSwitched'] || []) {
+      listener()
+    }
+  },
+
+  loadWorkspace: (): void => {
+    loadWorkspace()
+  },
+
   loadSettings: (): void => {
     
     // load settings
     loadSettings()
+    loadWorkspace()
 
     // we need to check the model list versions
-    const llmManager = LlmFactory.manager(store.config)
-    llmManager.checkModelListsVersion()
+    const llmManager = LlmFactory.manager(store.config) as LlmManager
+    llmManager.checkModelsCapabilities()
 
     // subscribe to file changes
     window.api.on('file-modified', (file) => {
@@ -49,7 +100,7 @@ export const store: Store = reactive({
       } else if (file === 'commands') {
         loadCommands()
       } else if (file === 'experts') {
-        loadExperts()
+        void store.loadExperts()
       } else if (file === 'agents') {
         loadAgents()
       }
@@ -65,7 +116,7 @@ export const store: Store = reactive({
     // subscribe to file changes
     window.api.on('file-modified', (file) => {
       if (file === 'history') {
-        mergeHistory(window.api.history.load())
+        mergeHistory(window.api.history.load(store.config.workspaceId))
       }
     })
 
@@ -75,8 +126,9 @@ export const store: Store = reactive({
     loadCommands()
   },
 
-  loadExperts: (): void => {
-    loadExperts()
+  loadExperts: async (): Promise<void> => {
+    loadCategories(store.config.workspaceId)
+    loadExperts(store.config.workspaceId)
   },
 
   loadAgents: (): void => {
@@ -90,6 +142,7 @@ export const store: Store = reactive({
 
     // load data
     store.loadSettings()
+    store.loadWorkspace()
     store.loadCommands()
     store.loadHistory()
     store.loadExperts()
@@ -126,19 +179,7 @@ export const store: Store = reactive({
       chat.tools = defaults.tools !== undefined ? defaults.tools : (defaults.disableTools ? [] : null)
       chat.locale = defaults.locale
       chat.instructions = defaults.instructions
-      chat.modelOpts = {
-        contextWindowSize: defaults.contextWindowSize,
-        maxTokens: defaults.maxTokens,
-        temperature: defaults.temperature,
-        top_k: defaults.top_k,
-        top_p: defaults.top_p,
-        reasoning: defaults.reasoning,
-        reasoningEffort: defaults.reasoningEffort,
-        verbosity: defaults.verbosity,
-      }
-      if (defaults.customOpts) {
-        chat.modelOpts.customOpts = defaults.customOpts
-      }
+      chat.modelOpts = defaults.modelOpts
     } else {
       chat.disableStreaming = false
       chat.tools = store.config.engines[chat.engine]?.disableTools ? [] : null
@@ -214,7 +255,7 @@ export const store: Store = reactive({
       }
       
       // save
-      window.api.history.save(history)
+      window.api.history.save(store.config.workspaceId, history)
   
     } catch (error) {
       console.log('Error saving history data', error)
@@ -247,13 +288,27 @@ const loadSettings = (): void => {
     store.config[key] = updated[key]
   }
 
+
+}
+
+const loadWorkspace = (): void => {
+  const loaded = window.api.workspace.load(store.config.workspaceId)
+  if (loaded) {
+    store.workspace = loaded
+  } else {
+    // Initialize default workspace if none exists
+    store.workspace = {
+      uuid: store.config.workspaceId,
+      name: 'Default Workspace'
+    }
+  }
 }
 
 const loadHistory = (): void => {
 
   try {
     store.history = { folders: [], chats: [], quickPrompts: [], /*padPrompts: []*/ }
-    const history = window.api.history.load()
+    const history = window.api.history.load(store.config.workspaceId)
     store.history.folders = history.folders || []
     store.history.quickPrompts = history.quickPrompts || []
     //store.history.padPrompts = history.padPrompts || []

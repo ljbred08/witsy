@@ -14,7 +14,7 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - name: get-package-version
         id: package-version
         uses: beaconbrigade/package-json-version@v0.3.2
@@ -27,6 +27,7 @@ jobs:
       - name: Build script
         run: make win-arm64
         env:
+          NODE_OPTIONS: --max_old_space_size=4096
           PREBUILDS_ONLY: "1"
           npm_config_platform: "win32"
           npm_config_arch: "arm64"

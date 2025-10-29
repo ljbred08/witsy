@@ -1,9 +1,9 @@
 <template>
   <div class="readaloud">
-    <BIconPauseCircle v-if="state == 'playing'" @click="onPlayPause()" />
-    <BIconPlayCircle v-else-if="state == 'paused'" @click="onPlayPause()" />
+    <PauseCircleIcon v-if="state == 'playing'" @click="onPlayPause()" />
+    <PlayCircleIcon v-else-if="state == 'paused'" @click="onPlayPause()" />
     <Loader class="loader" v-else />
-    <BIconXCircle @click="onStop()" />
+    <XCircleIcon @click="onStop()" />
     <audio/>
   </div>
 </template>
@@ -11,10 +11,11 @@
 <script setup lang="ts">
 
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters'
-import { ref, onMounted, onUnmounted } from 'vue'
-import { store } from '../services/store'
-import useAudioPlayer, { AudioStatus, textMaxLength} from '../composables/audio_player'
+import { PauseCircleIcon, PlayCircleIcon, XCircleIcon } from 'lucide-vue-next'
+import { onMounted, onUnmounted, ref } from 'vue'
 import Loader from '../components/Loader.vue'
+import useAudioPlayer, { AudioStatus, textMaxLength } from '../composables/audio_player'
+import { store } from '../services/store'
 
 // init stuff
 store.loadSettings()
@@ -108,7 +109,7 @@ const playChunk = (i: number) => {
   align-items: center;
   background-color: var(--window-bg-color);
   color: var(--text-color);
-  font-size: 18pt;
+  font-size: 24px;
   padding: 0px 8px;
   -webkit-app-region: drag;
 }

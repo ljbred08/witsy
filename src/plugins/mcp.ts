@@ -3,15 +3,18 @@ import { anyDict } from 'types/index'
 import { PluginConfig } from './plugin'
 import { MultiToolPlugin, LlmTool, PluginExecutionContext } from 'multi-llm-ts'
 import { t } from '../services/i18n'
+import { executeIpcWithAbort } from './ipc_abort_helper'
 
 export default class extends MultiToolPlugin {
 
   config: PluginConfig
+  workspaceId: string
   tools: LlmTool[]
   
-  constructor(config: PluginConfig) {
+  constructor(config: PluginConfig, workspaceId: string) {
     super()
     this.config = config
+    this.workspaceId = workspaceId
     this.tools = []
   }
 
@@ -45,7 +48,7 @@ export default class extends MultiToolPlugin {
 
   async getTools(): Promise<any> {
     try {
-      this.tools = await window.api.mcp.getTools()
+      this.tools = await window.api.mcp.getLlmTools()
       if (this.toolsEnabled) {
         return this.tools.filter((tool: any) => {
           return this.toolsEnabled.includes(tool.function.name)
@@ -73,12 +76,18 @@ export default class extends MultiToolPlugin {
     }
 
     try {
-      const result = await window.api.mcp.callTool(parameters.tool, parameters.parameters)
-      if (Array.isArray(result.content) && result.content.length == 1 && result.content[0].text) {
+      const result: any = await executeIpcWithAbort(
+        (signalId) => window.api.mcp.callTool(parameters.tool, parameters.parameters, signalId),
+        (signalId) => window.api.mcp.cancelTool(signalId),
+        context.abortSignal
+      )
+      
+      if ('content' in result && Array.isArray(result.content) && result.content.length == 1 && result.content[0].text) {
         return { result: result.content[0].text }
       } else {
         return result
       }
+    
     } catch (error) {
       console.error(error)
       return { error: error.message }

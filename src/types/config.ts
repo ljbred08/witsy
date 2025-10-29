@@ -1,11 +1,12 @@
 
 import { ChatModel, EngineCreateOpts, Model, LlmModelOpts } from 'multi-llm-ts'
-import { DesignStudioMediaType, Shortcut, strDict, TTSVoice } from './index'
+import { CustomInstruction, DesignStudioMediaType, Shortcut, strDict, TTSVoice } from './index'
 import { PluginConfig } from '../plugins/plugin'
-import { McpClaudeServer, McpServer, McpServerState } from './mcp'
+import { McpClaudeServer, McpServer, McpServerState, McpOAuthConfig } from './mcp'
 import { ToolSelection } from './llm'
 
 export type Configuration = {
+  workspaceId: string
   general: GeneralConfig
   llm: LLMConfig
   prompt: PromptConfig
@@ -37,6 +38,7 @@ export type EngineConfig = WitsyEngineCreateOpts & {
   models: ModelsConfig
   model: ModelConfig
   realtime?: EngineRealtimeConfig
+  hideDatedModels?: boolean
   disableTools?: boolean
   voices?: TTSVoice[]
 }
@@ -50,6 +52,7 @@ export type ProxyMode = 'default' | 'bypass' | 'custom'
 
 export type GeneralConfig = {
   firstRun: boolean
+  safeKeys: boolean
   onboardingDone: boolean
   hideOnStartup: boolean
   keepRunning: boolean
@@ -58,6 +61,9 @@ export type GeneralConfig = {
   locale: string
   tips: {[key: string]: boolean}
   confirm: {[key: string]: boolean}
+  webappEvictionMinutes: number
+  enableHttpEndpoints: boolean
+  cliInstallError: boolean
 }
 
 export type FavoriteModel = {
@@ -72,17 +78,14 @@ export type ModelDefaults = {
   disableStreaming: boolean
   disableTools?: boolean // backwards compatibility
   tools: ToolSelection
-  locale: string
-  instructions: string
-} & LlmModelOpts
+  locale?: string
+  instructions?: string
+  expert?: string
+  docrepo?: string
+  modelOpts?: LlmModelOpts
+}
 
 export type InstructionsType = 'standard' | 'structured' | 'playful' | 'empathic' | 'uplifting' | 'reflective' | 'visionary' | string
-
-export type CustomInstruction = {
-  id: string
-  label: string
-  instructions: string
-}
 
 export type LLMConfig = {
   instructions: InstructionsType  
@@ -94,6 +97,12 @@ export type LLMConfig = {
   imageResize: number
   defaults: ModelDefaults[]
   customInstructions: CustomInstruction[]
+  additionalInstructions: {
+    toolRetry: boolean
+    datetime: boolean
+    mermaid: boolean
+    artifacts: boolean
+  }
 }
 
 export type InstructionsConfig = {
@@ -105,7 +114,7 @@ export type InstructionsConfig = {
   }
 }
 
-export type DeepResearchRuntime = 'ma' | 'ms'
+export type DeepResearchRuntime = 'ma' | 'ms' | 'al'
 
 export type DeepResearchConfig = {
   runtime: DeepResearchRuntime
@@ -126,7 +135,7 @@ export type PromptConfig = {
   engine: string
   model: string
   disableStreaming: boolean
-  disableTools: boolean
+  tools: ToolSelection
   autosave: boolean
 }
 
@@ -157,12 +166,18 @@ export type AutomationConfig = {
 
 export type ChatToolMode = 'never' | 'calling' | 'always'
 
+export type TextFormat = 'text' | 'markdown'
+
 export type ChatAppearance = {
   showReasoning: boolean
   theme: string
   fontFamily: string
   fontSize: number
+  autoPreview: {
+    html: boolean
+  }
   showToolCalls: ChatToolMode
+  copyFormat: TextFormat
 }
 
 export type ChatListMode = 'timeline' | 'folder'
@@ -221,13 +236,8 @@ export type STTConfig = {
     gpu: boolean
   }
   soniox?: {
-    languageHints?: string[]
-    endpointDetection?: boolean
     cleanup?: boolean
     audioFormat?: string
-    proxy?: 'temporary_key' | 'proxy_stream'
-    tempKeyExpiry?: number
-    speakerDiarization?: boolean
   }
   //silenceAction: SilenceAction
 }
@@ -236,6 +246,9 @@ export type TTSConfig = {
   engine: string
   model: string
   voice: string
+  customOpenAI: {
+    baseURL: string
+  }
 }
 
 export type RealtimeConfig = {
@@ -282,6 +295,8 @@ export type RagConfig = {
 export type McpServerExtra = {
   label?: string
   state?: McpServerState
+  oauth?: McpOAuthConfig
+  toolSelection?: ToolSelection
 }
 
 export type McpConfig = {
@@ -290,4 +305,3 @@ export type McpConfig = {
   mcpServersExtra: Record<string, McpServerExtra>
   smitheryApiKey: string
 }
-

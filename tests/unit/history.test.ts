@@ -38,20 +38,37 @@ vi.mock('fs', async (importOriginal) => {
 })
 
 test('Load history', async () => {
-  const history = await loadHistory(app)
+  const history = await loadHistory(app, 'test-workspace')
   expect(history.folders).toHaveLength(2)
   expect(history.chats).toHaveLength(3)
 })
 
 test('Backwards compatibility', async () => {
-  const history = await loadHistory(app)
+  const history = await loadHistory(app, 'test-workspace')
   expect(history.folders[0].defaults.instructions).toBe('instructions')
+  expect(history.folders[0].defaults.temperature).toBeUndefined()
+  expect(history.folders[0].defaults.maxTokens).toBeUndefined()
+  expect(history.folders[0].defaults.verbosity).toBeUndefined()
+  expect(history.folders[0].defaults.reasoningBudget).toBeUndefined()
+  expect(history.folders[0].defaults.thinkingBudget).toBeUndefined()
+  expect(history.folders[0].defaults.customOpts).toBeUndefined()
+  expect(history.folders[0].defaults.modelOpts).toStrictEqual({
+    maxTokens: 1024,
+    temperature: 0.7,
+    verbosity: 'detailed',
+    reasoningBudget: 5,
+    thinkingBudget: 10,
+    customOpts: {
+      key1: 'value1',
+      key2: 'value2'
+    }
+  })
 })
 
 test('Save history', async () => {
-  const history = await loadHistory(app)
-  await saveHistory(app, history)
-  expect(fs.writeFileSync).toHaveBeenLastCalledWith('tests/fixtures/history.json', expect.any(String))
+  const history = await loadHistory(app, 'test-workspace')
+  await saveHistory(app, 'test-workspace', history)
+  expect(fs.writeFileSync).toHaveBeenLastCalledWith('tests/fixtures/workspaces/test-workspace/history.json', expect.any(String))
 })
 
 test('Extract attachments - invalid', async () => {
@@ -153,10 +170,10 @@ test('Extract attachments - mixed', async () => {
 
 test('Unused attachments', async () => {
   // image3 is not listed as as unused because it mtime is too recent
-  expect(listUnusedAttachments({ getPath: () => '' } as unknown as App, [
+  expect(listUnusedAttachments({ getPath: () => '' } as unknown as App, 'test-workspace', [
     { messages: [ { content: 'file://images/image1.png', attachments: [
       { url: 'file://images/image2.png' },
       { url: 'file://images/image5.png' }
     ] } ] },
-  ] as Chat[])).toEqual(['images/image4.png'])
+  ] as Chat[])).toEqual(['workspaces/test-workspace/images/image1.png', 'workspaces/test-workspace/images/image2.png', 'workspaces/test-workspace/images/image4.png', 'workspaces/test-workspace/images/image5.png'])
 })

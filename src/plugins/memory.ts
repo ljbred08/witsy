@@ -4,10 +4,12 @@ import { PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
 import Plugin, { PluginConfig } from './plugin'
 import { i18nInstructions, t } from '../services/i18n'
 
+export const kMemoryPluginName = 'long_term_memory'
+
 export default class extends Plugin {
 
-  constructor(config: PluginConfig) {
-    super(config)
+  constructor(config: PluginConfig, workspaceId: string) {
+    super(config, workspaceId)
   }
 
   isEnabled(): boolean {
@@ -15,7 +17,7 @@ export default class extends Plugin {
   }
 
   getName(): string {
-    return 'long_term_memory'
+    return kMemoryPluginName
   }
 
   getDescription(): string {

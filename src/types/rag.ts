@@ -1,5 +1,5 @@
 
-export type SourceType = 'file'|'folder'|'url'|'text'
+export type SourceType = 'file'|'folder'|'url'|'sitemap'|'text'
 
 // export type DocumentSourceBase = {
 //   uuid: string
@@ -52,8 +52,10 @@ export type DocumentMetadata = {
 export type DocumentBase = {
   uuid: string
   name: string
+  description?: string
   embeddingEngine: string
   embeddingModel: string
+  workspaceId: string
   documents: DocumentSource[]
 }
 
@@ -72,6 +74,7 @@ export interface DocumentQueueItem {
   baseId: string
   type: SourceType
   origin: string
+  title?: string
   parentDocId?: string
   operation: 'add' | 'update' | 'delete'
   fromUserAction: boolean
@@ -84,6 +87,6 @@ export type DocRepoAddDocResponse = {
 }
 
 export interface DocRepoListener {
-  onDocumentSourceAdded(baseId: string, sourceId: string, type: SourceType, origin: string): void
-  onDocumentSourceRemoved(baseId: string, sourceId: string, origin: string): void
+  onDocumentSourceAdded(source: DocumentSource): void
+  onDocumentSourceRemoved(origin: string): void
 }

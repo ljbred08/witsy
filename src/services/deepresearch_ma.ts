@@ -1,24 +1,22 @@
 
-import { Configuration } from '../types/config'
 import { LlmChunk, LlmEngine } from 'multi-llm-ts'
+import Chat from '../models/chat'
+import Message from '../models/message'
+import AgentPlugin, { AgentStorage } from '../plugins/agent'
+import { kSearchPluginName } from '../plugins/search'
+import { Configuration } from '../types/config'
 import * as dr from './deepresearch'
 import Generator, { GenerationResult } from './generator'
-import AgentPlugin, { AgentStorage } from '../plugins/agent'
-import Message from '../models/message'
-import Chat from '../models/chat'
 
 export default class DeepResearchMultiAgent implements dr.DeepResearch, AgentStorage {
 
   config: Configuration
-  generator: Generator
+  workspaceId: string
   storage: Record<string, any> = {}
 
-  constructor(config: Configuration) {
+  constructor(config: Configuration, workspaceId: string) {
     this.config = config
-  }
-
-  stop = (): void => {
-    this.generator?.stop()
+    this.workspaceId = workspaceId
   }
 
   run = async (engine: LlmEngine, chat: Chat, opts: dr.DeepResearchOpts): Promise<GenerationResult> => {
@@ -29,17 +27,20 @@ export default class DeepResearchMultiAgent implements dr.DeepResearch, AgentSto
     // to surface all agents work back to message
     const callback = (chunk: LlmChunk): void => {
       const lastMessage = chat.messages[chat.messages.length - 1]
-      if (chunk.type === 'tool' && chunk.name === 'search_internet') {
+      if (chunk.type === 'tool' && chunk.name === kSearchPluginName) {
         lastMessage.addToolCall(chunk)
       }
     }
 
     // add all deep research agents as plugins
     for (const agent of dr.deepResearchAgents) {
-      const agentPlugin = new AgentPlugin(this.config, agent, agent.engine || engine.getId(), agent.model || opts.model, {
-        noToolsInContent: true,
+      const agentPlugin = new AgentPlugin(this.config, this.workspaceId, agent, agent.engine || engine.getId(), agent.model || opts.model, {
         storeData: !['writer', 'synthesis'].includes(agent.name),
-        callback: callback,
+        workflowOpts: {
+          model: opts.model || agent.model,
+          noToolsInContent: true,
+          callback: callback,
+        },
       }, ['planning'].includes(agent.name) ? null : this as AgentStorage)
       engine.addPlugin(agentPlugin)
     }
@@ -56,8 +57,8 @@ export default class DeepResearchMultiAgent implements dr.DeepResearch, AgentSto
     }
 
     // now we can generate
-    this.generator = new Generator(this.config)
-    return await this.generator.generate(engine, chat.messages, {
+    const generator = new Generator(this.config)
+    return await generator.generate(engine, chat.messages, {
       ...opts,
       ...chat.modelOpts,
       toolChoice: { type: 'tool', name: 'agent_planning'}

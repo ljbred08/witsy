@@ -1,10 +1,10 @@
 
 import { vi, beforeAll, beforeEach, expect, test, afterEach } from 'vitest'
 import { enableAutoUnmount, mount, VueWrapper } from '@vue/test-utils'
-import { createDialogMock } from '../mocks'
 import { useWindowMock } from '../mocks/window'
 import { stubTeleport } from '../mocks/stubs'
 import { store, kMediaChatId } from '../../src/services/store'
+import { DEFAULT_WORKSPACE_ID } from '../../src/main/workspace'
 import { Configuration } from '../../src/types/config'
 import ImageCreator from '../../src/services/image'
 import DesignStudio from '../../src/screens/DesignStudio.vue'
@@ -15,10 +15,6 @@ import Chat from '../../src/models/chat'
 import Dialog from '../../src/composables/dialog'
 
 enableAutoUnmount(afterEach)
-
-vi.mock('../../src/composables/dialog', async () => {
-  return createDialogMock()
-})
 
 vi.mock('../../src/services/image', async (importOriginal) => {
   const mod: any = await importOriginal()
@@ -409,22 +405,22 @@ test('Preview', async () => {
   expect(preview.find<HTMLImageElement>('img').element.src).toBe('file://url1.jpg/')
 
   // info
-  await preview.find<HTMLElement>('.icon.info').trigger('click')
+  await preview.find<HTMLElement>('.info').trigger('click')
   expect(Dialog.show).toHaveBeenLastCalledWith(expect.objectContaining({
     title: 'prompt1',
     text: 'Engine: openai\nModel: dall-e-3',
   }))
 
   // fullscreen
-  await preview.find<HTMLElement>('.icon.fullscreen').trigger('click')
+  await preview.find<HTMLElement>('.fullscreen').trigger('click')
   expect(preview.emitted()['fullscreen']).toHaveLength(1)
 
   // copy
-  await preview.find<HTMLElement>('.icon.copy').trigger('click')
+  await preview.find<HTMLElement>('.copy').trigger('click')
   expect(window.api.clipboard.writeImage).toHaveBeenLastCalledWith('file://url1.jpg')
 
   // save
-  await preview.find<HTMLElement>('.icon.save').trigger('click')
+  await preview.find<HTMLElement>('.save').trigger('click')
   expect(window.api.file.download).toHaveBeenLastCalledWith({
     url: 'file://url1.jpg',
     properties: {
@@ -435,7 +431,7 @@ test('Preview', async () => {
   })
 
   // delete
-  await preview.find<HTMLElement>('.icon.delete').trigger('click')
+  await preview.find<HTMLElement>('.delete').trigger('click')
   expect(preview.emitted()['delete']).toHaveLength(1)
 
 })
@@ -449,7 +445,7 @@ test('Upload', async () => {
   await settings.find<HTMLButtonElement>('[name=upload]').trigger('click')
   expect(settings.emitted()['upload']).toHaveLength(1)
   expect(window.api.file.pickFile).toHaveBeenLastCalledWith({ filters: [
-    { name: 'Images', extensions: ['jpg', 'png', 'gif'] }
+    { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif'] }
   ] })
   expect(window.api.file.save).toHaveBeenLastCalledWith({
     contents: 'image64',
@@ -457,6 +453,7 @@ test('Upload', async () => {
       filename: expect.any(String),
       directory: 'userData',
       subdir: 'images',
+      workspace: DEFAULT_WORKSPACE_ID,
       prompt: false
     }
   })
@@ -590,12 +587,12 @@ test('Undo / Redo', async () => {
   await settings.find<HTMLButtonElement>('[name=generate]').trigger('click')
 
   const preview = wrapper.findComponent({ name: 'Preview' })
-  expect(preview.find('.icon.undo').exists()).toBe(true)
-  expect(preview.find('.icon.redo').exists()).toBe(true)
-  expect(preview.find('.icon.undo').classes()).not.toContain('disabled')
-  expect(preview.find('.icon.redo').classes()).toContain('disabled')
+  expect(preview.find('.undo').exists()).toBe(true)
+  expect(preview.find('.redo').exists()).toBe(true)
+  expect(preview.find('.undo').classes()).not.toContain('disabled')
+  expect(preview.find('.redo').classes()).toContain('disabled')
 
-  await preview.find<HTMLElement>('.icon.undo').trigger('click')
+  await preview.find<HTMLElement>('.undo').trigger('click')
 
   expect(window.api.file.delete).toHaveBeenLastCalledWith('file://openai/gpt-image-1/prompt')
 
@@ -630,10 +627,10 @@ test('Undo / Redo', async () => {
     toolCalls: []
   })
 
-  expect(preview.find('.icon.undo').classes()).toContain('disabled')
-  expect(preview.find('.icon.redo').classes()).not.toContain('disabled')
+  expect(preview.find('.undo').classes()).toContain('disabled')
+  expect(preview.find('.redo').classes()).not.toContain('disabled')
 
-  await preview.find<HTMLElement>('.icon.redo').trigger('click')
+  await preview.find<HTMLElement>('.redo').trigger('click')
 
   expect(window.api.file.delete).toHaveBeenLastCalledWith('file://file_saved')
 
@@ -666,5 +663,248 @@ test('Undo / Redo', async () => {
     }) ],
     toolCalls: []
   })
+
+})
+
+test('Attachment Button Visibility', async () => {
+
+  // Add Google image model first
+  store.config.engines.google.models.image!.push({ id: 'gemini-2-image', name: 'gemini-2-image' })
+
+  const wrapper = mount(DesignStudio)
+  const settings = wrapper.findComponent({ name: 'Settings' })
+  await settings.find<HTMLSelectElement>('[name=type]').setValue('image')
+  await wrapper.vm.$nextTick()
+
+  // Should not show attach button for OpenAI
+  await settings.find<HTMLSelectElement>('[name=engine]').setValue('openai')
+  await settings.find<HTMLSelectElement>('[name=model]').setValue('dall-e-3')
+  await wrapper.vm.$nextTick()
+  expect(settings.find<HTMLButtonElement>('[name=attach]').exists()).toBe(false)
+
+  // Should not show attach button for Google model without -image
+  await settings.find<HTMLSelectElement>('[name=engine]').setValue('google')
+  await wrapper.vm.$nextTick()
+  await settings.find<HTMLSelectElement>('[name=model]').setValue('gemini-2')
+  await wrapper.vm.$nextTick()
+  expect(settings.find<HTMLButtonElement>('[name=attach]').exists()).toBe(false)
+
+  // Should show attach button for Google model with -image
+  await settings.find<HTMLSelectElement>('[name=model]').setValue('gemini-2-image')
+  await wrapper.vm.$nextTick()
+  expect(settings.find<HTMLButtonElement>('[name=attach]').exists()).toBe(true)
+
+  // Should not show attach button for Replicate
+  await settings.find<HTMLSelectElement>('[name=engine]').setValue('replicate')
+  await wrapper.vm.$nextTick()
+  expect(settings.find<HTMLButtonElement>('[name=attach]').exists()).toBe(false)
+
+  // Should not show attach button for HuggingFace
+  await settings.find<HTMLSelectElement>('[name=engine]').setValue('huggingface')
+  await wrapper.vm.$nextTick()
+  expect(settings.find<HTMLButtonElement>('[name=attach]').exists()).toBe(false)
+
+})
+
+test('Attachment Management', async () => {
+
+  // Add Google image model first
+  store.config.engines.google.models.image!.push({ id: 'gemini-2-image', name: 'gemini-2-image' })
+
+  const wrapper = mount(DesignStudio)
+  const settings = wrapper.findComponent({ name: 'Settings' })
+  await settings.find<HTMLSelectElement>('[name=type]').setValue('image')
+  await wrapper.vm.$nextTick()
+  
+  // Set up Google engine and model
+  await settings.find<HTMLSelectElement>('[name=engine]').setValue('google')
+  await wrapper.vm.$nextTick()
+  await settings.find<HTMLSelectElement>('[name=model]').setValue('gemini-2-image')
+  await wrapper.vm.$nextTick()
+
+  // Initially no attachments
+  expect(settings.find('.attachments').exists()).toBe(false)
+  expect(settings.find<HTMLButtonElement>('[name=attach]').exists()).toBe(true)
+
+  // Add attachment
+  await settings.find<HTMLButtonElement>('[name=attach]').trigger('click')
+  expect(window.api.file.pickFile).toHaveBeenLastCalledWith({ filters: [
+    { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif'] }
+  ] })
+
+  await wrapper.vm.$nextTick()
+  
+  // Check attachment is displayed
+  expect(settings.find('.attachments').exists()).toBe(true)
+  expect(settings.findAll('.attachment')).toHaveLength(1)
+  
+  // The attachment should contain the AttachmentView component
+  const attachment = settings.find('.attachment')
+  expect(attachment.exists()).toBe(true)
+
+  // Check delete button exists
+  const deleteButton = settings.find('.attachment .delete')
+  expect(deleteButton.exists()).toBe(true)
+
+  // Remove attachment
+  await deleteButton.trigger('click')
+  await wrapper.vm.$nextTick()
+  
+  // Check attachment is removed
+  expect(settings.find('.attachments').exists()).toBe(false)
+
+})
+
+test('Attachment During Generation', async () => {
+
+  // Add Google image model first
+  store.config.engines.google.models.image!.push({ id: 'gemini-2-image', name: 'gemini-2-image' })
+
+  const wrapper = mount(DesignStudio)
+  const settings = wrapper.findComponent({ name: 'Settings' })
+  await settings.find<HTMLSelectElement>('[name=type]').setValue('image')
+  await wrapper.vm.$nextTick()
+  
+  // Set up Google engine and model
+  await settings.find<HTMLSelectElement>('[name=engine]').setValue('google')
+  await wrapper.vm.$nextTick()
+  await settings.find<HTMLSelectElement>('[name=model]').setValue('gemini-2-image')
+  await wrapper.vm.$nextTick()
+
+  // Add attachment
+  await settings.find<HTMLButtonElement>('[name=attach]').trigger('click')
+  await wrapper.vm.$nextTick()
+
+  // Set prompt and generate
+  await settings.find<HTMLTextAreaElement>('[name=prompt]').setValue('test prompt')
+  await settings.find<HTMLButtonElement>('[name=generate]').trigger('click')
+  
+  await wrapper.vm.$nextTick()
+  
+  // Check that generate event includes attachments
+  expect(settings.emitted()['generate']).toHaveLength(1)
+  expect(settings.emitted()['generate'][0]).toStrictEqual([
+    expect.objectContaining({
+      action: 'create',
+      mediaType: 'image',
+      engine: 'google',
+      model: 'gemini-2-image',
+      prompt: 'test prompt',
+      attachments: expect.arrayContaining([
+        expect.objectContaining({
+          url: expect.any(String),
+          mimeType: 'image/png'
+        })
+      ]),
+      params: {}
+    })
+  ])
+
+  // Check that ImageCreator.execute is called with attachments
+  expect(ImageCreator.prototype.execute).toHaveBeenLastCalledWith(
+    'google', 'gemini-2-image', { prompt: 'test prompt' }, expect.arrayContaining([
+      expect.objectContaining({
+        mimeType: 'image/png',
+        contents: 'image64'
+      })
+    ])
+  )
+
+})
+
+test('Attachment Button Disabled During Generation', async () => {
+
+  // Add Google image model first
+  store.config.engines.google.models.image!.push({ id: 'gemini-2-image', name: 'gemini-2-image' })
+
+  const wrapper: VueWrapper<any> = mount(DesignStudio)
+  const settings = wrapper.findComponent({ name: 'Settings' })
+  await settings.find<HTMLSelectElement>('[name=type]').setValue('image')
+  await wrapper.vm.$nextTick()
+  
+  // Set up Google engine and model
+  await settings.find<HTMLSelectElement>('[name=engine]').setValue('google')
+  await wrapper.vm.$nextTick()
+  await settings.find<HTMLSelectElement>('[name=model]').setValue('gemini-2-image')
+  await wrapper.vm.$nextTick()
+
+  // Initially enabled
+  expect(settings.find<HTMLButtonElement>('[name=attach]').element.disabled).toBe(false)
+
+  // Simulate generation state by directly setting the ref
+  wrapper.vm.isGenerating = true
+  await wrapper.vm.$nextTick()
+
+  // Should be disabled during generation
+  expect(settings.find<HTMLButtonElement>('[name=attach]').element.disabled).toBe(true)
+
+})
+
+test('Multiple Attachments Management', async () => {
+
+  const wrapper = mount(DesignStudio)
+  const settings = wrapper.findComponent({ name: 'Settings' })
+  await settings.find<HTMLSelectElement>('[name=type]').setValue('image')
+  await wrapper.vm.$nextTick()
+  
+  // Add Google image model and set it up
+  store.config.engines.google.models.image!.push({ id: 'gemini-2-image', name: 'gemini-2-image' })
+  await settings.find<HTMLSelectElement>('[name=engine]').setValue('google')
+  await wrapper.vm.$nextTick()
+  await settings.find<HTMLSelectElement>('[name=model]').setValue('gemini-2-image')
+  await wrapper.vm.$nextTick()
+
+  // Add first attachment
+  await settings.find<HTMLButtonElement>('[name=attach]').trigger('click')
+  await wrapper.vm.$nextTick()
+  
+  // Add second attachment
+  await settings.find<HTMLButtonElement>('[name=attach]').trigger('click')
+  await wrapper.vm.$nextTick()
+
+  // Should have 2 attachments
+  expect(settings.findAll('.attachment')).toHaveLength(2)
+
+  // Remove first attachment
+  await settings.findAll('.attachment .delete')[0].trigger('click')
+  await wrapper.vm.$nextTick()
+  
+  // Should have 1 attachment
+  expect(settings.findAll('.attachment')).toHaveLength(1)
+
+  // Remove second attachment
+  await settings.find('.attachment .delete').trigger('click')
+  await wrapper.vm.$nextTick()
+  
+  // Should have no attachments and attachments container should be hidden
+  expect(settings.find('.attachments').exists()).toBe(false)
+
+})
+
+test('Attachment Reset', async () => {
+
+  const wrapper = mount(DesignStudio)
+  const settings = wrapper.findComponent({ name: 'Settings' })
+  await settings.find<HTMLSelectElement>('[name=type]').setValue('image')
+  await wrapper.vm.$nextTick()
+  
+  // Add Google image model and set it up
+  store.config.engines.google.models.image!.push({ id: 'gemini-2-image', name: 'gemini-2-image' })
+  await settings.find<HTMLSelectElement>('[name=engine]').setValue('google')
+  await wrapper.vm.$nextTick()
+  await settings.find<HTMLSelectElement>('[name=model]').setValue('gemini-2-image')
+  await wrapper.vm.$nextTick()
+
+  // Add attachment
+  await settings.find<HTMLButtonElement>('[name=attach]').trigger('click')
+  await wrapper.vm.$nextTick()
+  expect(settings.find('.attachments').exists()).toBe(true)
+
+  // Reset via exposed method
+  settings.vm.reset()
+  await wrapper.vm.$nextTick()
+  
+  // Attachments should be cleared
+  expect(settings.find('.attachments').exists()).toBe(false)
 
 })

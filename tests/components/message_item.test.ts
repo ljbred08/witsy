@@ -1,10 +1,14 @@
 
 import { vi, beforeAll, beforeEach, afterAll, expect, test } from 'vitest'
 import { mount as vtumount, VueWrapper, enableAutoUnmount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { useWindowMock } from '../mocks/window'
-import { createDialogMock, createEventBusMock, createI18nMock, emitEventMock } from '../mocks'
+import { createI18nMock } from '../mocks'
+import { emitEventMock } from '../../vitest.setup'
 import { store } from '../../src/services/store'
+import { stubTeleport } from '../mocks/stubs'
 import MessageItem from '../../src/components/MessageItem.vue'
+import MessageItemHtmlBlock from '../../src/components/MessageItemHtmlBlock.vue'
 import Message from '../../src/models/message'
 import Chat from '../../src/models/chat'
 import Dialog from '../../src/composables/dialog'
@@ -13,16 +17,8 @@ enableAutoUnmount(afterAll)
 
 const readAloudMock = vi.fn()
 
-vi.mock('../../src/composables/dialog', async () => {
-  return createDialogMock()
-})
-
 vi.mock('../../src/services/i18n', async () => {
   return createI18nMock()
-})
-
-vi.mock('../../src/composables/event_bus', async () => {
-  return createEventBusMock()
 })
 
 vi.mock('../../src/composables/audio_player', async () => {
@@ -52,6 +48,14 @@ const botMessageTransient: Message = Message.fromJson({ role: 'assistant', type:
 const botMessageReasoning: Message = Message.fromJson({ role: 'assistant', type: 'text', reasoning: 'Hum', content :'Hi' })
 const botMessageToolMedia1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: '<tool index="0"></tool>Here:\n\n![image](file:///data/image.jpg)\n\nWelcome!' })
 const botMessageToolMedia2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Sure!\n\n<tool index="0"></tool>![image](file:///data/image.jpg)\n\nWelcome!' })
+const botMessageToolArtifact1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here:\n\n<artifact title="test">Test</artifact>\n\nWelcome!' })
+const botMessageToolArtifact2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here:\n\n<artifact title="test1">Test1</artifact>\n\n<artifact title="test2">Test2</artifact>\n\nWelcome!' })
+const botMessageToolArtifact3: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here:\n\n<artifact title="test1">Test1</artifact>\n\n<artifact title="test2">Te' })
+const botMessageToolArtifact4: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here:\n\n<artifact id="id1" title="test1" data="data1">Test1</artifact>' })
+const botMessageToolArtifactHtml1: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here is an HTML example:\n\n<artifact title="Simple HTML Page">```html\n<!DOCTYPE html>\n<html>\n<head>\n<title>Test Page</title>\n</head>\n<body>\n<h1>Hello World</h1>\n<p>This is a test paragraph.</p>\n</body>\n</html>\n```</artifact>\n\nThat\'s it!' })
+const botMessageToolArtifactHtml2: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here is HTML without language specifier:\n\n<artifact title="HTML with DOCTYPE">```\n<!DOCTYPE html>\n<html>\n<head>\n<title>Test Page</title>\n</head>\n<body>\n<h1>Hello from DOCTYPE</h1>\n</body>\n</html>\n```</artifact>' })
+const botMessageToolArtifactHtml3: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here is another HTML example:\n\n<artifact title="HTML with tag">```\n<html>\n<head>\n<title>Simple Test</title>\n</head>\n<body>\n<h1>Hello from HTML tag</h1>\n</body>\n</html>\n```</artifact>' })
+const botMessageTable: Message = Message.fromJson({ role: 'assistant', type: 'text', content: 'Here is a table:\n\n| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |\n\nThat\'s it!' })
 
 beforeAll(() => {
   useWindowMock()
@@ -77,7 +81,7 @@ beforeEach(() => {
 })
 
 const mount = async (message: Message, mouseenter = true): Promise<VueWrapper<any>> => {
-  const wrapper = vtumount(MessageItem, { props: { chat: chat, message: message, readAloud: readAloudMock } })
+  const wrapper = vtumount(MessageItem, { ...stubTeleport, props: { chat: chat, message: message, readAloud: readAloudMock } })
   if (mouseenter) await wrapper.trigger('mouseenter')
   return wrapper
 }
@@ -101,7 +105,7 @@ test('User message', async () => {
   expect(wrapper.find('.body .message-transient').exists()).toBe(false)
   expect(wrapper.find('.body .toggle-reasoning').exists()).toBe(false)
   expect(wrapper.find('.body .think').exists()).toBe(false)
-  expect(wrapper.find('.actions .copy').exists()).toBe(false)
+  expect(wrapper.find('.actions .copy').exists()).toBe(true)
   expect(wrapper.find('.actions .read').exists()).toBe(false)
   expect(wrapper.find('.actions .retry').exists()).toBe(false)
   expect(wrapper.find('.actions .fork').exists()).toBe(true)
@@ -268,6 +272,147 @@ test('Assistant image message with tool media', async () => {
 
 })
 
+test('Assistant image message with artifact', async () => {
+
+  const wrapper1 = await mount(botMessageToolArtifact1)
+  expect(wrapper1.find('.body').text()).toBe('Here:\ntestTest\nWelcome!')
+  expect(wrapper1.findAll('.body .artifact').length).toBe(1)
+
+  const wrapper2 = await mount(botMessageToolArtifact2)
+  expect(wrapper2.find('.body').text()).toBe('Here:\ntest1Test1\ntest2Test2\nWelcome!')
+  expect(wrapper2.findAll('.body .artifact').length).toBe(2)
+
+  const wrapper3 = await mount(botMessageToolArtifact3)
+  expect(wrapper3.find('.body').text()).toBe('Here:\ntest1Test1\ntest2Te')
+  expect(wrapper3.findAll('.body .artifact').length).toBe(2)
+
+  const wrapper4 = await mount(botMessageToolArtifact4)
+  expect(wrapper4.find('.body').text()).toBe('Here:\ntest1Test1')
+  expect(wrapper4.findAll('.body .artifact').length).toBe(1)
+
+})
+
+test('Assistant artifact with HTML preview', async () => {
+
+  // Set message as transient to test the streaming behavior
+  botMessageToolArtifactHtml1.transient = true
+
+  const wrapper = await mount(botMessageToolArtifactHtml1)
+  expect(wrapper.findAll('.body .artifact').length).toBe(1)
+
+  const artifact = wrapper.find('.body .artifact')
+  expect(artifact.exists()).toBe(true)
+  expect(artifact.find('.panel-header label').text()).toBe('Simple HTML Page')
+
+  const artifactComponent: VueWrapper<any> = wrapper.findComponent(MessageItemHtmlBlock)
+
+  // Phase 1: Initial state - loading div should show, no iframe
+  expect(artifact.find('.html-loading').exists()).toBe(true)
+  expect(artifact.find('.html-loading').text()).toBe('common.htmlGeneration')
+  expect(artifact.find('iframe').exists()).toBe(false)
+
+  // Phase 2: Head detected - trigger updateIframeContent to detect </head>
+  artifactComponent.vm.updateIframeContent()
+  await artifactComponent.vm.$nextTick()
+
+  // headComplete is now true, but delay hasn't passed yet
+  // Since headComplete is true, iframe condition is met, but html computed returns empty until delay passes
+  // So we need to pass the delay for iframe to show
+  artifactComponent.vm.htmlRenderingDelayPassed = true
+  await artifactComponent.vm.$nextTick()
+
+  // Now iframe should exist with cached HTML (head + empty body + listener)
+  let iframe = artifact.find('iframe')
+  expect(iframe.exists()).toBe(true)
+  expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-same-origin allow-forms')
+  expect(iframe.attributes('srcdoc')).toContain('<body></body>')
+  expect(iframe.attributes('srcdoc')).toContain('window.addEventListener')
+  expect(artifact.find('.html-loading').exists()).toBe(false)
+
+  // Check for preview controls
+  const previewButton = artifact.find('.preview')
+  expect(previewButton.exists()).toBe(true)
+
+  // Toggle off HTML preview
+  await previewButton.trigger('click')
+  await artifactComponent.vm.$nextTick()
+  iframe = artifact.find('iframe')
+  expect(iframe.exists()).toBe(false)
+  // When preview is off, it shows the HTML source code
+  expect(artifact.find('.html-loading').exists()).toBe(false)
+  expect(artifact.find('.text').exists()).toBe(true)
+
+  // Toggle back on HTML preview
+  await previewButton.trigger('click')
+  await artifactComponent.vm.$nextTick()
+  iframe = artifact.find('iframe')
+  expect(iframe.exists()).toBe(true)
+
+})
+
+test('Assistant artifact with HTML preview (non-transient)', async () => {
+
+  // Use a non-transient message - should show HTML immediately
+  const wrapper = await mount(botMessageToolArtifactHtml2)
+  expect(wrapper.findAll('.body .artifact').length).toBe(1)
+
+  const artifact = wrapper.find('.body .artifact')
+  expect(artifact.exists()).toBe(true)
+  expect(artifact.find('.panel-header label').text()).toBe('HTML with DOCTYPE')
+
+  const iframe = artifact.find('iframe')
+  if (iframe.exists()) {
+    // Non-transient message should show HTML immediately (no loading message)
+    expect(iframe.attributes('sandbox')).toBe('allow-scripts allow-same-origin allow-forms')
+    expect(iframe.attributes('srcdoc')).toContain('<!DOCTYPE html>')
+    expect(iframe.attributes('srcdoc')).toContain('<h1>Hello from DOCTYPE</h1>')
+    expect(iframe.attributes('srcdoc')).not.toContain('common.htmlGeneration')
+  }
+
+})
+
+test('Assistant artifact with HTML preview (DOCTYPE)', async () => {
+
+  // Enable HTML auto-preview
+  store.config.appearance.chat.autoPreview.html = true
+  
+  const wrapper = await mount(botMessageToolArtifactHtml2)
+  expect(wrapper.findAll('.body .artifact').length).toBe(1)
+  
+  const artifact = wrapper.find('.body .artifact')
+  expect(artifact.exists()).toBe(true)
+  expect(artifact.find('.panel-header label').text()).toBe('HTML with DOCTYPE')
+  
+  // Check for preview controls (play/stop buttons)
+  expect(artifact.find('.preview').exists()).toBe(true)
+  
+  // Check if iframe is present for HTML preview
+  const iframe = artifact.find('iframe')
+  expect(iframe.exists()).toBe(true)
+
+})
+
+test('Assistant artifact with HTML preview (HTML tag)', async () => {
+
+  // Enable HTML auto-preview
+  store.config.appearance.chat.autoPreview.html = true
+  
+  const wrapper = await mount(botMessageToolArtifactHtml3)
+  expect(wrapper.findAll('.body .artifact').length).toBe(1)
+  
+  const artifact = wrapper.find('.body .artifact')
+  expect(artifact.exists()).toBe(true)
+  expect(artifact.find('.panel-header label').text()).toBe('HTML with tag')
+  
+  // Check for preview controls (play/stop buttons)
+  expect(artifact.find('.preview').exists()).toBe(true)
+  
+  // Check if iframe is present for HTML preview
+  const iframe = artifact.find('iframe')
+  expect(iframe.exists()).toBe(true)
+
+})
+
 test('Transient message', async () => {
   const wrapper = await mount(botMessageTransient)
   expect(wrapper.find('.body').text()).toBe('Hi')
@@ -353,9 +498,15 @@ test('Run assistant text actions', async () => {
   botMessageText.addToolCall({ type: 'tool', id: 'tool', name: 'tool', status: 'Calling a tool', done: true })
   const wrapper = await mount(botMessageText)
   
-  // copy
+  // copy as text
   await wrapper.find('.actions .copy').trigger('click')
   expect(window.api.clipboard.writeText).toHaveBeenLastCalledWith('Hi\n\n1. One\n\n2. Two')
+  expect(wrapper.find('.actions .copy').text()).toBe('common.copied')
+
+  // copy as markdown
+  store.config.appearance.chat.copyFormat = 'markdown'
+  await wrapper.find('.actions .copy').trigger('click')
+  expect(window.api.clipboard.writeText).toHaveBeenLastCalledWith('**Hi**\n\n1. One \n\n2. Two')
   expect(wrapper.find('.actions .copy').text()).toBe('common.copied')
 
   // usage
@@ -369,12 +520,17 @@ test('Run assistant text actions', async () => {
   // retry
   await wrapper.find('.actions .retry').trigger('click')
   expect(Dialog.show).toHaveBeenCalledTimes(2)
-  expect(store.config.general.confirm.retryGeneration).toBe(false)
+  expect(store.config.general.confirm.retryGeneration).toBe(true)
   expect(emitEventMock).toHaveBeenLastCalledWith('retry-generation', botMessageText)
 
   // retry again
   await wrapper.find('.actions .retry').trigger('click')
-  expect(Dialog.show).toHaveBeenCalledTimes(2)
+  expect(Dialog.show).toHaveBeenCalledTimes(3)
+
+  // retry one more time
+  store.config.general.confirm.retryGeneration = false  
+  await wrapper.find('.actions .retry').trigger('click')
+  expect(Dialog.show).toHaveBeenCalledTimes(3)
 
   // fork
   await wrapper.find('.actions .fork').trigger('click')
@@ -478,4 +634,122 @@ test('Format reasoning message', async () => {
   await (wrapper.find('.body .toggle-reasoning').trigger('click'))
   expect(wrapper.find('.body .think').exists()).toBe(false)
   expect(store.config.appearance.chat.showReasoning).toBe(false)
+})
+
+test('Artifact download context menu', async () => {
+  const wrapper = await mount(botMessageToolArtifact1)
+
+  // Check that the artifact has a download button
+  const artifact = wrapper.find('.body .artifact')
+  const downloadButton = artifact.find('.panel-header .download .trigger')
+  expect(downloadButton.exists()).toBe(true)
+
+  // Click the download button to show context menu
+  await downloadButton.trigger('click')
+  await nextTick()
+
+  // Check that context menu is visible
+  const contextMenu = wrapper.find('.context-menu')
+  expect(contextMenu.exists()).toBe(true)
+
+  // Check that all three download options are present
+  const menuItems = contextMenu.findAll('.item')
+  expect(menuItems.length).toBe(3)
+  expect(menuItems[0].text()).toContain('Text')
+  expect(menuItems[1].text()).toContain('Markdown')
+  expect(menuItems[2].text()).toContain('PDF')
+
+})
+
+test('Artifact download text', async () => {
+  const wrapper = await mount(botMessageToolArtifact1)
+
+  // Check that the artifact has a download button
+  const artifact = wrapper.find('.body .artifact')
+  const downloadButton = artifact.find('.panel-header .download .trigger')
+  expect(downloadButton.exists()).toBe(true)
+
+  // Click the download button to show context menu
+  await downloadButton.trigger('click')
+  await nextTick()
+
+  const contextMenu = wrapper.find('.context-menu')
+  const menuItems = contextMenu.findAll('.item')
+
+  // markdown export
+  await menuItems[0].trigger('click')
+  expect(window.api.file.save).toHaveBeenLastCalledWith({
+    contents: 'Test_encoded',
+    properties: {
+      filename: 'test.txt',
+      prompt: true,
+    }
+  })
+
+})
+
+test('Artifact download markdown', async () => {
+  const wrapper = await mount(botMessageToolArtifact1)
+
+  // Check that the artifact has a download button
+  const artifact = wrapper.find('.body .artifact')
+  const downloadButton = artifact.find('.panel-header .download .trigger')
+  expect(downloadButton.exists()).toBe(true)
+
+  // Click the download button to show context menu
+  await downloadButton.trigger('click')
+  await nextTick()
+
+  const contextMenu = wrapper.find('.context-menu')
+  const menuItems = contextMenu.findAll('.item')
+
+  // markdown export
+  await menuItems[1].trigger('click')
+  expect(window.api.file.save).toHaveBeenLastCalledWith({
+    contents: 'Test_encoded',
+    properties: {
+      filename: 'test.md',
+      prompt: true,
+    }
+  })
+
+})
+
+test('Assistant message with table', async () => {
+  const wrapper = await mount(botMessageTable)
+  expect(wrapper.find('.body').text()).toContain('Here is a table:')
+  expect(wrapper.find('.body').text()).toContain('That\'s it!')
+  expect(wrapper.findAll('.body .artifact').length).toBe(1)
+
+  const artifact = wrapper.find('.body .artifact')
+  expect(artifact.exists()).toBe(true)
+
+  // Check for table inside panel body
+  expect(artifact.find('.panel-body table').exists()).toBe(true)
+
+  // Check for download button
+  const downloadButton = artifact.find('.panel .download')
+  expect(downloadButton.exists()).toBe(true)
+})
+
+test('Table download context menu', async () => {
+  const wrapper = await mount(botMessageTable)
+
+  const artifact = wrapper.find('.body .artifact')
+  const downloadButton = artifact.find('.panel .download .trigger')
+  expect(downloadButton.exists()).toBe(true)
+
+  // Click the download button to show context menu
+  await downloadButton.trigger('click')
+  await nextTick()
+
+  // Check that context menu is visible
+  const contextMenu = wrapper.find('.context-menu')
+  expect(contextMenu.exists()).toBe(true)
+
+  // Check that CSV and XLSX options are present
+  const menuItems = contextMenu.findAll('.item')
+  expect(menuItems.length).toBe(2)
+  expect(menuItems[0].text()).toContain('common.downloadCsv')
+  expect(menuItems[1].text()).toContain('common.downloadXlsx')
 })

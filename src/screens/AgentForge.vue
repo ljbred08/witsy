@@ -1,46 +1,48 @@
 <template>
   <div class="split-pane">
-    <div class="sp-main">
-      <header v-if="mode === 'create'">
-        <BIconChevronLeft class="icon back" @click="closeCreate" />
-        <div class="title">{{ t('agent.forge.create') }}</div>
-      </header>
-      <header v-else-if="mode === 'view' || mode === 'edit'">
-        <BIconChevronLeft class="icon back" @click="selectAgent(null)" />
-        <div class="title">{{ selected.name }}</div>
-      </header>
-      <header v-else>
-        <div class="title">{{ t('agent.forge.title') }}</div>
-      </header>
-      <main class="empty sliding-root" :class="{ visible: mode === 'list' }" v-if="store.agents.length === 0">
-        <BIconRobot @click="onCreate()" />
-        {{ t('agent.forge.empty') }}
-      </main>
-      <main class="sliding-root" :class="{ visible: mode === 'list' }" v-else>
-        <List :agents="store.agents" @create="onCreate" @import-a2-a="onImportA2A"  @edit="editAgent" @run="runAgent" @view="viewAgent" @delete="deleteAgent" />
-      </main>
-      <main class="sliding-pane" :class="{ visible: mode !== 'list' }" @transitionend="onTransitionEnd">
-        <Editor :style="{ display: isPaneVisible('create') || isPaneVisible('edit') ? 'flex' : 'none' }" :mode="mode as 'create' | 'edit'" :agent="selected" @cancel="closeCreate" @save="onSaved" />
-        <View :style="{ display: isPaneVisible('view') ? 'flex' : 'none' }" :agent="selected" @run="runAgent" @edit="editAgent" @delete="deleteAgent" />
-      </main>
-    </div>
+
+    <template v-if="mode === 'list'">
+    
+      <template v-if="store.agents.length === 0">
+        <Empty class="sp-main" @click="onCreate()" />
+      </template>
+
+      <template v-else>
+        <List class="sp-main" :agents="store.agents" @create="onCreate" @import-a2-a="onImportA2A" @import-json="onImportJson" @export="onExport" @duplicate="duplicateAgent" @edit="editAgent" @run="runAgent" @view="viewAgent" @delete="deleteAgent" />
+      </template>
+
+    </template>
+
+    <template v-else-if="mode === 'create' || mode === 'edit'">
+      <Editor class="sp-main" :mode="mode as 'create' | 'edit'" :agent="selected" @cancel="closeCreate" @save="onSaved" />
+    </template>
+
+    <template v-else-if="mode === 'view'">
+      <View class="sp-main" :agent="selected" @run="runAgent" @edit="editAgent" @delete="deleteAgent" @close="selectAgent(null)"/>
+    </template>
+
     <PromptBuilder :title="running?.name ?? ''" ref="builder" />
+  
   </div>
+
 </template>
 
 <script setup lang="ts">
-import { AgentType } from '../types/index'
-import { ref, onMounted } from 'vue'
-import { t } from '../services/i18n'
-import { store } from '../services/store'
-import A2AClient from '../services/a2a-client'
-import Dialog from '../composables/dialog'
-import PromptBuilder from '../components/PromptBuilder.vue'
+
+import { ref } from 'vue'
+import Editor from '../agent/Editor.vue'
+import Empty from '../agent/Empty.vue'
 import List from '../agent/List.vue'
 import View from '../agent/View.vue'
-import Editor from '../agent/Editor.vue'
-import AgentRunner from '../services/runner'
+import PromptBuilder from '../components/PromptBuilder.vue'
+import Dialog from '../composables/dialog'
 import Agent from '../models/agent'
+import A2AClient from '../services/a2a-client'
+import AgentWorkflowExecutor from '../services/agent_executor_workflow'
+import { t } from '../services/i18n'
+import { store } from '../services/store'
+import { AgentType } from '../types/agents'
+import { FileContents } from '../types/file'
 
 defineProps({
   extra: Object
@@ -54,13 +56,6 @@ const selected = ref<Agent|null>(null)
 const running = ref<Agent|null>(null)
 const builder = ref(null)
 
-const isPaneVisible = (paneMode: AgentForgeMode) => {
-  return mode.value === paneMode || prevMode.value === paneMode
-}
-
-onMounted(() => {
-})
-
 const selectAgent = async (agent: Agent|null) => {
   if (!agent) {
     prevMode.value = mode.value
@@ -71,16 +66,20 @@ const selectAgent = async (agent: Agent|null) => {
   }
 }
 
-const onTransitionEnd = async () => {
-  if (mode.value === 'list') {
-    selected.value = null
-    prevMode.value = null
-  }
-}
-
 const onCreate = (type?: AgentType) => {
+  
+  const agent = new Agent()
+  if (store.workspace.models?.length) {
+    const model = store.workspace.models[0]
+    agent.engine = model.engine
+    agent.model = model.model
+  } else {
+    agent.engine = 'openai'
+    agent.model = 'gpt-4.1'
+  }
+  
   mode.value = 'create'
-  selected.value = new Agent()
+  selected.value = agent
   selected.value.type = type ?? 'runnable'
 }
 
@@ -111,7 +110,7 @@ const onImportA2A = async (type?: AgentType) => {
 
     if (agent) {
       agent.type = type || 'runnable'
-      window.api.agents.save(agent)
+      window.api.agents.save(store.config.workspaceId, agent)
       editAgent(agent)
       break
     }
@@ -150,10 +149,17 @@ const editAgent = (agent: Agent) => {
 const runAgent = (agent: Agent, opts?: Record<string, string>) => {
   running.value = agent
   builder.value.show(agent.steps[0].prompt, opts || {}, async (prompt: string) => {
-    const runner = new AgentRunner(store.config, agent)
-    await runner.run('manual', prompt)
+    const executor = new AgentWorkflowExecutor(store.config, store.workspace.uuid, agent)
+    await executor.run('manual', prompt)
     running.value = null
   })
+}
+
+const duplicateAgent = (data: any) => {
+  const agent = Agent.fromJson(data)
+  const duplicated = agent.duplicate(t('agent.copySuffix'))
+  window.api.agents.save(store.config.workspaceId, duplicated)
+  store.loadAgents()
 }
 
 const deleteAgent = (agent: Agent) => {
@@ -164,56 +170,78 @@ const deleteAgent = (agent: Agent) => {
     showCancelButton: true,
   }).then((result) => {
     if (result.isConfirmed) {
-      window.api.agents.delete(agent.uuid)
+      window.api.agents.delete(store.config.workspaceId, agent.uuid)
       store.loadAgents()
       selectAgent(null)
     }
   })
 }
 
-</script>
+const onExport = (agent: Agent) => {
+  const jsonContent = JSON.stringify(agent, null, 2)
+  const encodedContent = window.api.base64.encode(jsonContent)
 
-
-<style scoped>
-
-.split-pane {
-  
-  .sp-main {
-
-    main {
-    
-      &.empty {
-
-        padding: 10% 25%;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        padding-top: 10rem;
-        gap: 2rem;
-        text-align: center;
-
-        color: var(--faded-text-color);
-        font-family: var(--font-family-serif);
-        font-size: 16pt;
-        font-weight: 500;
-        line-height: 1.5;
-
-        svg {
-          cursor: pointer;
-          width: 10rem;
-          height: 10rem;
-          opacity: 20%;
-        }
-      }
-
-      &.sliding-pane {
-        /* not sure why the default 100% makes it too wide here */
-        /* as this does not happen for DocRepos who have the same structure */
-        width: calc(100% - var(--window-menubar-width));
-      }
-
+  window.api.file.save({
+    contents: encodedContent,
+    properties: {
+      filename: `${agent.name}.json`,
+      prompt: true
     }
+  })
+}
+
+const onImportJson = async () => {
+  try {
+    const file = window.api.file.pickFile({
+      filters: [{ name: 'Agent JSON', extensions: ['json'] }]
+    })
+
+    if (!file) return
+
+    const fileContents = file as FileContents
+    const jsonContent = window.api.base64.decode(fileContents.contents)
+    const importedAgent = Agent.fromJson(JSON.parse(jsonContent))
+
+    // Check for UUID conflict
+    const existingAgent = store.agents.find(a => a.uuid === importedAgent.uuid)
+
+    if (existingAgent) {
+      const result = await Dialog.show({
+        title: t('agent.forge.import.conflict.title'),
+        text: t('agent.forge.import.conflict.text'),
+        confirmButtonText: t('agent.forge.import.conflict.overwrite'),
+        denyButtonText: t('agent.forge.import.conflict.createNew'),
+        showDenyButton: true,
+        showCancelButton: true,
+      })
+
+      await Dialog.waitUntilClosed()
+
+      if (result.isDismissed) return
+
+      // If user chose "Create New", generate new UUID
+      if (result.isDenied) {
+        importedAgent.uuid = crypto.randomUUID()
+        importedAgent.createdAt = Date.now()
+        importedAgent.updatedAt = Date.now()
+      }
+    }
+
+    window.api.agents.save(store.config.workspaceId, importedAgent)
+    store.loadAgents()
+
+  } catch (error) {
+    console.error('Error importing agent:', error)
+    await Dialog.show({
+      title: t('agent.forge.import.error.title'),
+      text: t('agent.forge.import.error.text'),
+      confirmButtonText: t('common.ok'),
+    })
+    await Dialog.waitUntilClosed()
   }
 }
 
+</script>
+
+<style scoped>
 </style>

@@ -1,123 +1,119 @@
 <template>
   <div class="agent-editor" @keydown.enter="onSave">
 
-    <div class="master-detail">
+    <header>
+      <div class="title">{{ agent.name || t('agent.forge.create') }}</div>
+      <div class="spacer"></div>
+      <button class="large tertiary" name="cancel" @click="emit('cancel')">{{ t('common.cancel') }}</button>
+      <button class="large secondary" name="prev" @click="onPrevStep" v-if="currentStep > 0">{{ t('common.back') }}</button>
       
-      <div class="md-master">
+      <button class="large default" name="next" @click="onNextStep">
+        {{ isStepVisible(kStepInvocation) ? t('common.save') : t('common.next') }}
+      </button>
+    </header>
 
-        <div class="md-master-header" v-if="mode === 'create'">
-          <div class="md-master-header-title">Welcome to the Create&nbsp;Agent assistant</div>
-          <div class="md-master-header-desc">
-            Agents are autonomous entities used to automate workflows, answer questions, or interact with other systems.
+    <main>
+
+      <div class="wizard">
+
+        <div class="wizard-header">
+
+          <div class="wizard-steps">
+
+            <div class="wizard-step" :class="{ active: isStepVisible(kStepGeneral), completed: isStepCompleted(kStepGeneral) }" @click="onStepClick(kStepGeneral)" v-if="hasStep(kStepGeneral)">
+              <Settings2Icon class="icon" /> {{ t('agent.create.information.title') }}
+            </div>
+
+            <!-- <div class="md-master-list-item" :class="{ selected: isStepVisible(kStepGoal), disabled: !isStepCompleted(kStepGoal) }" @click="onStepClick(kStepGoal)" v-if="hasStep(kStepGoal)">
+              <TargetIcon class="logo" /> {{ t('agent.create.goal.title') }}
+            </div> -->
+
+            <div class="wizard-step" :class="{ active: isStepVisible(kStepModel) || isStepVisible(kStepSettings), completed: isStepCompleted(kStepModel) }" @click="onStepClick(kStepModel)" v-if="hasStep(kStepModel)">
+              <BoxIcon class="icon" /> {{ t('agent.create.llm.title') }}
+            </div>
+
+            <div class="wizard-step" :class="{ active: isStepVisible(kStepWorkflow), completed: isStepCompleted(kStepWorkflow) }" @click="onStepClick(kStepWorkflow)" v-if="hasStep(kStepWorkflow)">
+              <FlowIcon class="icon" /> {{ t('agent.create.workflow.title') }}
+            </div>
+
+            <div class="wizard-step" :class="{ active: isStepVisible(kStepInvocation), completed: isStepCompleted(kStepInvocation) }" @click="onStepClick(kStepInvocation)" v-if="hasStep(kStepInvocation)">
+              <TriggerIcon class="icon" /> {{ t('agent.create.invocation.title') }}
+            </div>
+
           </div>
+
         </div>
+        
+        <div class="wizard-body form form-large form-vertical">
 
-        <div class="md-master-list">
+          <EditorGeneral ref="stepGeneral"
+            :agent="agent" 
+            :visible="isStepVisible(kStepGeneral)" 
+            :prev-button-text="t('common.cancel')" 
+            :error="informationError" 
+            @prev="onPrevStep" 
+            @next="validateInformation" 
+          />
 
-          <div class="md-master-list-item" :class="{ selected: isStepVisible(kStepGeneral), disabled: !isStepCompleted(kStepGeneral) }" @click="onStepClick(kStepGeneral)" v-if="hasStep(kStepGeneral)">
-            <BIconCardHeading class="logo" /> {{ t('agent.create.information.title') }}
-          </div>
+          <EditorModel ref="stepModel"
+            :agent="agent" 
+            :visible="isStepVisible(kStepModel)" 
+            :has-settings="hasSettings" 
+            @prev="onPrevStep" 
+            @next="validateModel" 
+            @show-settings="showSettings"
+          />
 
-          <div class="md-master-list-item" :class="{ selected: isStepVisible(kStepGoal), disabled: !isStepCompleted(kStepGoal) }" @click="onStepClick(kStepGoal)" v-if="hasStep(kStepGoal)">
-            <BIconBullseye class="logo" /> {{ t('agent.create.goal.title') }}
-          </div>
+          <EditorSettings ref="stepSettings"
+            :agent="agent" 
+            :visible="isStepVisible(kStepSettings)" 
+            @prev="onPrevStep" 
+            @next="validateSettings" 
+          />
 
-          <div class="md-master-list-item" :class="{ selected: isStepVisible(kStepModel) || isStepVisible(kStepSettings), disabled: !isStepCompleted(kStepModel) }" @click="onStepClick(kStepModel)" v-if="hasStep(kStepModel)">
-            <BIconCpu class="logo" /> {{ t('agent.create.llm.title') }}
-          </div>
+          <EditorWorkflow ref="stepWorkflow"
+            :agent="agent" 
+            :visible="isStepVisible(kStepWorkflow)" 
+            :error="informationError" 
+            :expanded-step="expandedStep"
+            @prev="onPrevStep" 
+            @next="validateWorkflow"
+            @update:expanded-step="expandedStep = $event"
+          />
 
-          <div class="md-master-list-item" :class="{ selected: isStepVisible(kStepWorkflow), disabled: !isStepCompleted(kStepWorkflow) }" @click="onStepClick(kStepWorkflow)" v-if="hasStep(kStepWorkflow)">
-            <BIconDiagram2 class="logo scale120" /> {{ t('agent.create.workflow.title') }}
-          </div>
+          <EditorInvocation ref="stepInvocation"
+            :agent="agent" 
+            :visible="isStepVisible(kStepInvocation)" 
+            :next-button-text="t('common.save')" 
+            @prev="onPrevStep" 
+            @next="validateInvocation" 
+          />
 
-          <div class="md-master-list-item" :class="{ selected: isStepVisible(kStepInvocation), disabled: !isStepCompleted(kStepInvocation) }" @click="onStepClick(kStepInvocation)" v-if="hasStep(kStepInvocation)">
-            <BIconLightningCharge class="logo" /> {{ t('agent.create.invocation.title') }}
-          </div>
-
-        </div>
-
-        <div class="md-master-footer" v-if="mode === 'edit'">
-          <div class="buttons">
-            <button class="large" @click="emit('cancel')">{{ t('common.cancel') }}</button>
-            <button class="large" @click="save">{{ t('common.save') }}</button>
-          </div>
         </div>
 
       </div>
-      
-      <div class="md-detail form form-large form-vertical">
 
-        <EditorGeneral 
-          :agent="agent" 
-          :visible="isStepVisible(kStepGeneral)" 
-          :prev-button-text="t('common.cancel')" 
-          :error="informationError" 
-          @prev="onPrevStep" 
-          @next="validateInformation" 
-        />
-
-        <EditorGoal 
-          :agent="agent" 
-          :visible="isStepVisible(kStepGoal)" 
-          :error="informationError" 
-          @prev="onPrevStep" 
-          @next="validateGoal" 
-        />
-
-        <EditorModel 
-          :agent="agent" 
-          :visible="isStepVisible(kStepModel)" 
-          :has-settings="hasSettings" 
-          @prev="onPrevStep" 
-          @next="validateModel" 
-          @show-settings="showSettings"
-        />
-
-        <EditorSettings 
-          :agent="agent" 
-          :visible="isStepVisible(kStepSettings)" 
-          @prev="onPrevStep" 
-          @next="validateSettings" 
-        />
-
-        <EditorWorkflow 
-          :agent="agent" 
-          :visible="isStepVisible(kStepWorkflow)" 
-          :error="informationError" 
-          :expanded-step="expandedStep"
-          @prev="onPrevStep" 
-          @next="validateWorkflow"
-          @update:expanded-step="expandedStep = $event"
-        />
-
-        <EditorInvocation 
-          :agent="agent" 
-          :visible="isStepVisible(kStepInvocation)" 
-          :next-button-text="t('common.save')" 
-          @prev="onPrevStep" 
-          @next="validateInvocation" 
-        />
-
-      </div>
-
-    </div>
+    </main>
 
 </div>
 </template>
 
 <script setup lang="ts">
 
-import { ref, onMounted, computed, watch, PropType } from 'vue'
+import { BoxIcon, Settings2Icon } from 'lucide-vue-next'
+import { computed, onMounted, PropType, ref, watch } from 'vue'
+import FlowIcon from '../../assets/flow.svg?component'
+import TriggerIcon from '../../assets/trigger.svg?component'
+import Dialog from '../composables/dialog'
+import Agent from '../models/agent'
 import { t } from '../services/i18n'
 import { extractPromptInputs } from '../services/prompt'
-import Dialog from '../composables/dialog'
+import { store } from '../services/store'
 import EditorGeneral from './Editor.General.vue'
-import EditorGoal from './Editor.Goal.vue'
+import EditorInvocation from './Editor.Invocation.vue'
 import EditorModel from './Editor.Model.vue'
 import EditorSettings from './Editor.Settings.vue'
 import EditorWorkflow from './Editor.Workflow.vue'
-import EditorInvocation from './Editor.Invocation.vue'
-import Agent from '../models/agent'
 
 const props = defineProps({
   agent: {
@@ -138,8 +134,13 @@ const completedStep = ref(-1)
 const informationError = ref('')
 const expandedStep = ref<number>(0)
 
+const stepGeneral = ref<typeof EditorGeneral>(null)
+const stepModel = ref<typeof EditorModel>(null)
+const stepSettings = ref<typeof EditorSettings>(null)
+const stepWorkflow = ref<typeof EditorWorkflow>(null)
+const stepInvocation = ref<typeof EditorInvocation>(null)
+
 const kStepGeneral = 'general'
-const kStepGoal = 'goal'
 const kStepModel = 'model'
 const kStepSettings = 'settings'
 const kStepWorkflow = 'workflow'
@@ -158,10 +159,9 @@ const steps = (): string[] => {
     ]
   }
 
-  // default
+  // edit mode
   return [
     kStepGeneral,
-    kStepGoal,
     kStepModel,
     kStepSettings,
     kStepWorkflow,
@@ -197,11 +197,25 @@ const hasStep = (step: string) => {
 }
 
 const isStepCompleted = (step: string) => {
-  return stepIndex(step) <= completedStep.value + 1
+  return stepIndex(step) <= completedStep.value
 }
 
 const isStepVisible = (step: string) => {
   return stepIndex(step) === currentStep.value
+}
+
+const onNextStep = () => {
+  if (currentStep.value == stepIndex(kStepGeneral)) {
+    validateInformation()
+  } else if (currentStep.value == stepIndex(kStepModel)) {
+    validateModel()
+  } else if (currentStep.value == stepIndex(kStepSettings)) {
+    validateSettings()
+  } else if (currentStep.value == stepIndex(kStepWorkflow)) {
+    validateWorkflow()
+  } else if (currentStep.value == stepIndex(kStepInvocation)) {
+    validateInvocation()
+  }
 }
 
 const onPrevStep = () => {
@@ -219,7 +233,9 @@ const showSettings = () => {
 }
 
 const onStepClick = (step: string) => {
-  currentStep.value = stepIndex(step)
+  if (isStepCompleted(step)) {
+    currentStep.value = stepIndex(step)
+  }
 }
 
 const goToStepAfter = (step: string, stepSize: number = 1) => {
@@ -229,56 +245,55 @@ const goToStepAfter = (step: string, stepSize: number = 1) => {
   completedStep.value = Math.max(completedStep.value, currentIndex)
 }
 
-const validateInformation = (event?: { error: string }) => {
-  if (event?.error) {
-    informationError.value = event.error
+const validateInformation = () => {
+  const error = stepGeneral.value?.validate()
+  if (error) {
+    informationError.value = error
     return
   }
   goToStepAfter(kStepGeneral)
 }
 
-const validateGoal = (event?: { error: string }) => {
-  if (event?.error) {
-    informationError.value = event.error
-    return
-  }
-  goToStepAfter(kStepGoal)
-}
-
-const validateModel = (event?: { error: string }) => {
-  if (event?.error) {
-    informationError.value = event.error
+const validateModel = () => {
+  const error = stepModel.value?.validate()
+  if (error) {
+    informationError.value = error
     return
   }
   goToStepAfter(kStepModel, hasSettings.value ? 2 : 1)
 }
 
-const validateSettings = (event?: { error: string }) => {
-  if (event?.error) {
-    informationError.value = event.error
+const validateSettings = () => {
+  const error = stepSettings.value?.validate()
+  if (error) {
+    informationError.value = error
     return
   }
   goToStepAfter(kStepSettings)
 }
 
-const validateWorkflow = (event?: { error: string }) => {
-  if (event?.error) {
-    informationError.value = event.error
+const validateWorkflow = () => {
+  const error = stepWorkflow.value?.validate()
+  if (error) {
+    informationError.value = error
     return
   }
   goToStepAfter(kStepWorkflow)
 }
 
-const validateInvocation = (event?: { error: string }) => {
-  if (event?.error) {
-    informationError.value = event.error
+const validateInvocation = () => {
+  const error = stepInvocation.value?.validate()
+  if (error) {
+    informationError.value = error
     return
   }
   save()
 }
 
 const resetWizard = () => {
-  currentStep.value = stepIndex(kStepGeneral)
+  // Start from the first step in the steps array
+  const allSteps = steps()
+  currentStep.value = allSteps.length > 0 ? stepIndex(allSteps[0]) : 0
   completedStep.value = props.mode === 'edit' ? steps().length - 1 : -1
   expandedStep.value = (props.mode === 'edit' && agent.value.steps.length > 1) ? -1 : 0
   informationError.value = ''
@@ -308,7 +323,7 @@ const save = async () => {
   }
 
   // we can save
-  const rc = window.api.agents.save(JSON.parse(JSON.stringify(agent.value)))
+  const rc = window.api.agents.save(store.config.workspaceId, JSON.parse(JSON.stringify(agent.value)))
   if (rc) {
     emit('save', agent.value)
   }
@@ -321,73 +336,24 @@ const save = async () => {
 
 .agent-editor {
 
-  .master-detail {
-    
-    width: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--background-color-light);
+  overflow: hidden;
 
-    .md-master {
-
-      .md-master-list {
-
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-
-        .md-master-list-item {
-
-          &.selected {
-            background-color: var(--window-decoration-color);
-          }
-
-          &.disabled {
-            opacity: 0.5;
-            pointer-events: none;
-          }
-        }
-      }
-
-      .md-master-footer {
-
-        padding-top: 2rem;
-        border-top: 1px solid var(--sidebar-border-color);
-        margin-top: 1rem;
-
-        .buttons {
-          display: flex;
-          justify-content: center;
-        }
-
-      }
-
-
+  header {
+    position: sticky;
+    button {
+      padding: 0.5rem 0.75rem;
+      font-weight: var(--font-weight-medium);
     }
+  }
 
-    .md-detail {
+  main {
 
-      margin-top: 1rem;
-      margin-bottom: 2rem;
+    .wizard {
 
       &:deep() {
-
-
-        .panel {
-          .panel-header {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 0.5rem;
-          }
-          .help {
-            font-size: 11pt;
-            font-weight: normal;
-            color: var(--faded-text-color);
-          }
-        }
-
-        .form-field .help {
-          font-size: 10.5pt;
-          color: var(--faded-text-color);
-          margin-bottom: 0.25rem;
-        }
 
         textarea {
           flex: auto;
@@ -410,9 +376,9 @@ const save = async () => {
           }
 
         }
-        
+
       }
- 
+
     }
 
   }

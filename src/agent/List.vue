@@ -1,103 +1,147 @@
 
 <template>
   <div class="agents-list">
-    <div v-for="type in ['runnable', 'support']" :key="type" :set="agents = getAgents(type as AgentType)" >
-      <div class="agents panel">
-        <div class="panel-header">
-          <label>{{ t(`agent.forge.list.${type}`) }}</label>
-          <BIconPlusLg 
-            class="icon create" 
-            v-tooltip="{ text: t('agent.help.create'), position: 'bottom-left' }" 
-            @click="emit('create', type)" 
-          />
-          <LogoA2A
-            class="icon a2a"
-            v-tooltip="{ text: 'A2A Integration', position: 'bottom-left' }"
-            @click="emit('importA2A', type)"
-          />
-        </div>
-        <div class="panel-body" v-if="agents.length">
-          <template v-for="agent in agents" :key="agent.uuid">
-            <div class="panel-item" @click="$emit('view', agent)">
-              <div class="info">
-                <div class="text">{{ agent.name }}</div>
-                <div class="subtext">{{ agent.description }}</div>
-              </div>
-              <div class="actions">
-                <BIconPlayCircle 
-                  class="run" 
-                  v-tooltip="{ text: t('agent.help.run'), position: 'top-left' }" 
-                  @click.stop="$emit('run', agent)" 
-                />
-                <BIconSearch 
-                  class="view" 
-                  v-tooltip="{ text: t('agent.help.view'), position: 'top-left' }" 
-                  @click.stop="$emit('view', agent)" 
-                />
-                <BIconPencil 
-                  class="edit" 
-                  v-tooltip="{ text: t('agent.help.edit'), position: 'top-left' }" 
-                  @click.stop="$emit('edit', agent)" 
-                />
-                <BIconTrash 
-                  class="delete" 
-                  v-tooltip="{ text: t('agent.help.delete'), position: 'top-left' }" 
-                  @click.stop="$emit('delete', agent)" 
-                />
-              </div>
-            </div>
-          </template>
-        </div>
-        <div class="panel-empty" v-else>
-          {{ t('agent.forge.list.empty') }}
-        </div>
+
+    <header>
+      <div class="title">{{ t('agent.forge.title') }}</div>
+      <div class="actions">
+        <button name="import-json" class="large secondary" @click="emit('importJson')"><UploadIcon />{{ t('agent.help.import') }}</button>
+        <button name="import-a2a" class="large secondary" @click="emit('importA2A')"><LogoA2A />{{ t('agent.forge.a2a.title') }}</button>
+        <button name="create" class="large primary" @click="emit('create')"><PlusIcon />{{ t('agent.forge.create') }}</button>
       </div>
-    </div>
+    </header>
+
+    <main>
+      <table class="table-plain table-plain-spaced">
+
+        <thead>
+          <tr>
+            <th>{{ t('agent.name') }}</th>
+            <th>{{ t('agent.description') }}</th>
+            <th>{{ t('common.type') }}</th>
+            <th>{{ t('agent.history.lastRun') }}</th>
+            <th>{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          <tr v-for="agent in agents">
+            <td>{{ agent.name }}</td>
+            <td>{{ agent.description }}</td>
+            <td>{{ t(`agent.forge.list.${agent.type}`) }}</td>
+            <td>{{ lastRun(agent) }}</td>
+            <td><div class="actions">
+              <SpinningIcon v-if="startingAgents.includes(agent.uuid)" :spinning="true" class="run" />
+              <ButtonIcon v-else
+                class="run"
+                v-tooltip="{ text: t('agent.help.run'), position: 'top-left' }"
+                @click="onAgentRun(agent)"
+              ><PlayIcon /></ButtonIcon>
+              <ButtonIcon
+                class="view" 
+                v-tooltip="{ text: t('agent.help.view'), position: 'top-left' }" 
+                @click="$emit('view', agent)" 
+              ><EyeIcon /></ButtonIcon>
+              <ContextMenuTrigger position="below-right">
+                <template #menu>
+                  <div class="item edit" @click="$emit('edit', agent)">
+                    {{ t('agent.help.edit') }}
+                  </div>
+                  <div class="item export" @click="$emit('export', agent)">
+                    {{ t('agent.help.export') }}
+                  </div>
+                  <div class="item duplicate" @click="$emit('duplicate', agent)">
+                    {{ t('agent.help.duplicate') }}
+                  </div>
+                  <div class="item delete" @click="$emit('delete', agent)">
+                    {{ t('agent.help.delete') }}
+                  </div>
+                </template>
+              </ContextMenuTrigger>
+            </div></td>
+          </tr>
+        </tbody>
+      </table>
+    </main>
   </div>
 </template>
 
 <script setup lang="ts">
 
-import { Agent, AgentType } from '../types/index'
-import { PropType } from 'vue'
-import { t } from '../services/i18n'
+import { EyeIcon, PlayIcon, PlusIcon, UploadIcon } from 'lucide-vue-next'
+import { PropType, onMounted, onUnmounted, ref, watch } from 'vue'
 import LogoA2A from '../../assets/a2a.svg?component'
+import ButtonIcon from '../components/ButtonIcon.vue'
+import ContextMenuTrigger from '../components/ContextMenuTrigger.vue'
+import SpinningIcon from '../components/SpinningIcon.vue'
+import { useTimeAgo } from '../composables/ago'
+import { t } from '../services/i18n'
+import { store } from '../services/store'
+import { Agent, AgentRun } from '../types/agents'
 
-let agents: Agent[] = []
-
-const emit = defineEmits(['create', 'view', 'edit', 'run', 'delete', 'importA2A']) 
-
-const getAgents = (type: AgentType) => {
-  return props.agents.filter(agent => agent.type === type).sort((a, b) => b.updatedAt - a.updatedAt)
-}
+const emit = defineEmits(['create', 'view', 'edit', 'run', 'delete', 'duplicate', 'export', 'importA2A', 'importJson'])
 
 const props = defineProps({
   agents: Array as PropType<Agent[]>,
 })
+
+const runs = ref<Record<string, AgentRun[]>>({})
+const startingAgents = ref<string[]>([])
+
+onMounted(() => {
+  loadAllRuns()
+  watch(() => props.agents, loadAllRuns, { deep: true })
+  window.api.on('agent-run-update', onAgentRunUpdate)
+})
+
+onUnmounted(() => {
+  window.api.off('agent-run-update', onAgentRunUpdate)
+})
+
+const loadAllRuns = () => {
+  if (!props.agents) return
+  const newCache: Record<string, AgentRun[]> = {}
+  for (const agent of props.agents) {
+    newCache[agent.uuid] = window.api.agents.getRuns(store.config.workspaceId, agent.uuid)
+  }
+  runs.value = newCache
+}
+
+const onAgentRun = async (agent: Agent) => {
+  emit('run', agent)
+  startingAgents.value.push(agent.uuid)
+  setTimeout(() => {
+    const idx = startingAgents.value.indexOf(agent.uuid)
+    if (idx !== -1) startingAgents.value.splice(idx, 1)
+  }, 1000)
+}
+
+const onAgentRunUpdate = (data: { agentId: string }) => {
+  if (data.agentId && runs.value[data.agentId] !== undefined) {
+    runs.value[data.agentId] = window.api.agents.getRuns(store.config.workspaceId, data.agentId)
+  }
+}
+
+const lastRun = (agent: Agent) => {
+  const agentRuns = runs.value[agent.uuid] || []
+  if (agentRuns.length === 0) return t('agent.history.neverRun')
+  const lastRun = agentRuns[agentRuns.length - 1]
+  if (lastRun.status === 'running') return t('agent.history.running')
+  return useTimeAgo().format(new Date(lastRun.createdAt))
+}
 
 </script>
 
 <style scoped>
 
 .agents-list {
-  
-  margin: 4rem;
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
 
-  .panel-header {
-    .a2a {
-      position: relative;
-      transform: scaleY(110%);
-      top: 1.5px;
-    }
+  header {
+    border-bottom: none;
   }
 
-  .agents {
-    .create {
-      transform: scale(1.125);
-    }
+  main {
+    padding: 4rem;
   }
 
 }

@@ -1,19 +1,36 @@
 <template>
   <div class="expert-editor form form-vertical form-large" @keydown.enter="onSave">
     <div class="form-field" v-if="diffLang" style="margin-top: 16px; margin-bottom: 24px">
-      <label class="no-colon"><BIconExclamationCircle /></label>
+      <label class="no-colon"><CircleAlertIcon /></label>
       <div>{{ t('common.differentLocales') }}</div>
     </div>
     <div class="form-field">
       <label>{{ t('common.name') }}</label>
       <input type="text" name="name" v-model="name" required @keyup="onChangeText" />
     </div>
+    <!-- <div class="form-field">
+      <label>{{ t('common.description') }}</label>
+      <textarea name="description" v-model="description" rows="2" :placeholder="t('settings.experts.descriptionPlaceholder')"></textarea>
+    </div> -->
     <div class="form-field">
       <label>{{ t('common.prompt') }}</label>
       <div class="form-subgroup">
         <textarea name="prompt" v-model="prompt" required @keyup="onChangeText"></textarea>
         <a href="#" name="reset" @click="onReset" v-if="isEdited">{{ t('commands.editor.resetToDefault') }}</a>
       </div>
+    </div>
+    <div class="form-field">
+      <label>{{ t('common.category') }}</label>
+      <select v-model="categoryId">
+        <option value="">{{ t('settings.experts.noCategory') }}</option>
+        <option v-for="cat in allCategories" :key="cat.id" :value="cat.id">
+          {{ categoryI18n(cat, 'name') }}
+        </option>
+      </select>
+    </div>
+    <div class="form-field">
+      <label>{{ t('common.llmProvider') }}</label>
+      <EngineModelSelect :engine="engine" :model="model" :default-label="t('experts.editor.useDefault')" @model-selected="onModelSelected" />
     </div>
     <div class="form-field" v-if="supportTriggerApps">
       <label>{{ t('experts.editor.triggerApps') }}</label>
@@ -27,8 +44,8 @@
         </template>
         </div>
         <div class="lwa-actions">
-          <button class="button add" @click.prevent="onAddApp"><BIconPlus /></button>
-          <button class="button del" @click.prevent="onDelApp"><BIconDash /></button>
+          <button class="button add" @click.prevent="onAddApp"><PlusIcon /></button>
+          <button class="button del" @click.prevent="onDelApp"><MinusIcon /></button>
         </div>
         <span> {{ t('experts.editor.triggerAppsDescription') }}</span>
       </div>
@@ -42,11 +59,14 @@
 
 <script setup lang="ts">
 
-import { Expert, ExternalApp } from '../types/index'
-import { FileContents } from '../types/file'
-import { onMounted, ref, computed, watch } from 'vue'
-import { expertI18n, expertI18nDefault, t } from '../services/i18n'
+import { CircleAlertIcon, MinusIcon, PlusIcon } from 'lucide-vue-next'
+import { computed, onMounted, ref, watch } from 'vue'
 import Dialog from '../composables/dialog'
+import { expertI18n, expertI18nDefault, categoryI18n, t } from '../services/i18n'
+import { store } from '../services/store'
+import { FileContents } from '../types/file'
+import { Expert, ExternalApp } from '../types/index'
+import EngineModelSelect from './EngineModelSelect.vue'
 
 const emit = defineEmits(['expert-modified']);
 
@@ -56,11 +76,17 @@ const props = defineProps<{
 
 const type = ref(null)
 const name = ref(null)
+const description = ref(null)
+const categoryId = ref<string>('')
 const prompt = ref(null)
+const engine = ref(null)
+const model = ref(null)
 const triggerApps = ref([])
 const selectedApp = ref(null)
 const diffLang = ref(false)
 const isEdited = ref(false)
+
+const allCategories = computed(() => store.expertCategories.filter(c => c.state === 'enabled'))
 
 const icons: Record<string, FileContents> = {}
 
@@ -76,13 +102,22 @@ const onChangeText = () => {
   isEdited.value = ((props.expert?.type === 'system') && (name.value !== expertI18nDefault(props.expert, 'name') || prompt.value !== expertI18nDefault(props.expert, 'prompt')))
 }
 
+const onModelSelected = (e: string, m: string) => {
+  model.value = m
+  engine.value = e
+}
+
 onMounted(async () => {
   watch(() => props || {}, async () => {
 
     // update values
     type.value = props.expert?.type || 'user'
+    categoryId.value = props.expert?.categoryId || ''
     name.value = props.expert?.name || expertI18n(props.expert, 'name')
+    description.value = props.expert?.id ? (props.expert?.description ?? expertI18n(props.expert, 'description')) : ''
     prompt.value = props.expert?.id ? (props.expert?.prompt || expertI18n(props.expert, 'prompt')) : ''
+    engine.value = props.expert?.engine || ''
+    model.value = props.expert?.model || ''
     triggerApps.value = JSON.parse(JSON.stringify(props.expert?.triggerApps || []))
     diffLang.value = window.api.config.localeUI() !== window.api.config.localeLLM()
     selectedApp.value = null
@@ -153,7 +188,10 @@ const onSave = (event: Event) => {
   emit('expert-modified', {
     id: props.expert.id,
     name: name.value === expertI18nDefault(props.expert, 'name') ? undefined : name.value,
+    description: description.value || undefined,
+    categoryId: categoryId.value || undefined,
     prompt: prompt.value === expertI18nDefault(props.expert, 'prompt') ? undefined : prompt.value,
+    ...(engine.value?.length && model.value?.length ? { engine: engine.value, model: model.value } : {}),
     triggerApps: triggerApps.value.map((app) => {
       if (app.icon.contents) {
         app.icon = app.icon.url.replace('file://', '')
@@ -172,6 +210,10 @@ const onSave = (event: Event) => {
   textarea {
     height: 120px;
     resize: vertical !important;
+  }
+
+  .engine-model-select {
+    width: calc(100% - 2rem);
   }
 
   .list-with-actions {

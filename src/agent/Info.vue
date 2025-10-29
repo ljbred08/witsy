@@ -5,21 +5,21 @@
   
     <div class="panel-header">
       <label>{{ t('agent.view.header') }}</label>
-      <BIconPlayCircle 
-        class="icon run" 
+      <ButtonIcon 
+        class="run" 
         v-tooltip="{ text: t('agent.help.run'), position: 'bottom-left' }" 
         @click="onRun" 
-      />
-      <BIconPencil 
-        class="icon edit" 
+      ><PlayIcon /></ButtonIcon>
+      <ButtonIcon 
+        class="edit" 
         v-tooltip="{ text: t('agent.help.edit'), position: 'bottom-left' }" 
         @click="onEdit" 
-      />
-      <BIconTrash 
-        class="icon delete" 
+      ><PencilIcon /></ButtonIcon>
+      <ButtonIcon 
+        class="delete" 
         v-tooltip="{ text: t('agent.help.delete'), position: 'bottom-left' }" 
         @click="onDelete" 
-      />
+      ><Trash2Icon /></ButtonIcon>
     </div>
     
     <div class="panel-body form form-vertical form-large">
@@ -50,10 +50,12 @@
 </template>
 <script setup lang="ts">
 
-import { Agent, AgentRun } from '../types/index'
-import { PropType, computed } from 'vue'
-import { t } from '../services/i18n'
 import { CronExpressionParser } from 'cron-parser'
+import { PencilIcon, PlayIcon, Trash2Icon } from 'lucide-vue-next'
+import { PropType, computed } from 'vue'
+import ButtonIcon from '../components/ButtonIcon.vue'
+import { t } from '../services/i18n'
+import { Agent, AgentRun } from '../types/agents'
 
 const props = defineProps({
   agent: {
@@ -128,7 +130,7 @@ const onDelete = () => {
   padding-top: 2px;
   text-align: center;
   font-weight: bold;
-  font-size: 10pt;
+  font-size: 13.5px;
 }
 
 .status-bar-segment.success {

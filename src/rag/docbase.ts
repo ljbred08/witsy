@@ -11,7 +11,6 @@ import Loader from './loader'
 import Splitter from './splitter'
 import { databasePath } from './utils'
 import * as file from '../main/file'
-import { v4 as uuidv4 } from 'uuid'
 import fs from 'fs'
 
 const ADD_COMMIT_EVERY = 5
@@ -25,21 +24,25 @@ export default class DocumentBaseImpl {
 
   uuid: string
   name: string
+  description?: string
   embeddingEngine: string
   embeddingModel: string
+  workspaceId: string
   documents: DocumentSourceImpl[]
 
-  constructor(app: App, uuid: string, name: string, embeddingEngine: string, embeddingModel: string) {
+  constructor(app: App, uuid: string, name: string, embeddingEngine: string, embeddingModel: string, workspaceId: string, description?: string) {
     this.app = app
     this.uuid = uuid
     this.name = name
+    this.description = description
     this.embeddingEngine = embeddingEngine
     this.embeddingModel = embeddingModel
+    this.workspaceId = workspaceId
     this.documents = []
   }
 
   static fromJSON(app: App, json: any): DocumentBaseImpl {
-    const base = new DocumentBaseImpl(app, json.uuid, json.name, json.embeddingEngine, json.embeddingModel)
+    const base = new DocumentBaseImpl(app, json.uuid, json.name || json.title, json.embeddingEngine, json.embeddingModel, json.workspaceId, json.description)
     for (const doc of json.documents) {
       const source = DocumentSourceImpl.fromJSON(doc)
       base.documents.push(source)
@@ -69,14 +72,14 @@ export default class DocumentBaseImpl {
     }
   }
 
-  async addDocumentSource(uuid: string, type: SourceType, url: string, callback: VoidFunction): Promise<string> {
+  async addDocumentSource(uuid: string, type: SourceType, url: string, title?: string, callback?: VoidFunction): Promise<string|null> {
 
     // check existing
     let source = this.documents.find(d => d.uuid === uuid)
     if (source) {
       await this.deleteDocumentSource(uuid)
     } else {
-      source = new DocumentSourceImpl(uuid, type, url)
+      source = new DocumentSourceImpl(uuid, type, url, title)
     }
 
     // add if
@@ -87,11 +90,28 @@ export default class DocumentBaseImpl {
       callback?.()
       await this.addFolder(source, callback)
 
+    } else if (type === 'sitemap') {
+
+      // we add first so container is visible
+      this.documents.push(source)
+      callback?.()
+      await this.addSitemap(source, callback)
+
     } else {
 
-      // we add only when it's done
-      await this.addDocument(source, callback)
+      // we add first so container is visible
       this.documents.push(source)
+      callback?.()
+
+      // we add only when it's done
+      try {
+        await this.addDocument(source, callback)
+      } catch (error) {
+        console.error('[rag] Error adding document', error)
+        this.documents = this.documents.filter(d => d.uuid !== source.uuid)
+        callback?.()
+        return null
+      }
 
     }
 
@@ -203,7 +223,7 @@ export default class DocumentBaseImpl {
         await this.db.insert(source.uuid, batch[i], embeddings[i], {
           uuid: source.uuid,
           type: source.type,
-          title: source.getTitle(),
+          title: source.title,
           url: source.url
         })
         if (++transactionSize === 1000) {
@@ -233,41 +253,42 @@ export default class DocumentBaseImpl {
 
   }
 
-  async addFolder(source: DocumentSourceImpl, callback: VoidFunction): Promise<void> {
-
-    // list files in folder recursively
-    const files = file.listFilesRecursively(source.origin)
-
-    // add to the database using transaction
+  private async addChildDocuments(
+    source: DocumentSourceImpl,
+    childItems: Array<{ type: SourceType, origin: string }>,
+    callback: VoidFunction
+  ): Promise<void> {
     await this.connect()
-    // await this.db.beginTransaction()
 
-    // iterate
     let added = 0
-    for (const file of files) {
+    for (const item of childItems) {
       try {
-
-        // do it
-        const doc = new DocumentSourceImpl(uuidv4(), 'file', file)
+        const doc = new DocumentSourceImpl(crypto.randomUUID(), item.type, item.origin)
         await this.addDocument(doc)
         source.items.push(doc)
 
-        // commit?
         if ((++added) % ADD_COMMIT_EVERY === 0) {
-          // await this.db.commitTransaction()
           callback?.()
-          // await this.db.beginTransaction()
         }
-
-      } catch {
-        //console.error('Error adding file', file, error)
+      } catch (error) {
+        console.error('Error adding child document', item.origin, error)
       }
     }
-
-    // done
-    // await this.db.commitTransaction()
     callback?.()
+  }
 
+  async addFolder(source: DocumentSourceImpl, callback: VoidFunction): Promise<void> {
+    const files = file.listFilesRecursively(source.origin)
+    const items = files.map(f => ({ type: 'file' as SourceType, origin: f }))
+    await this.addChildDocuments(source, items, callback)
+  }
+
+  async addSitemap(source: DocumentSourceImpl, callback: VoidFunction): Promise<void> {
+    const config: Configuration = loadSettings(this.app)
+    const loader = new Loader(config)
+    const urls = await loader.getSitemapUrls(source.origin)
+    const items = urls.map(url => ({ type: 'url' as SourceType, origin: url }))
+    await this.addChildDocuments(source, items, callback)
   }
 
   async deleteDocumentSource(docId: string, callback?: VoidFunction): Promise<void> {
@@ -401,7 +422,7 @@ export default class DocumentBaseImpl {
     modified: DocumentSourceImpl[],
     deleted: DocumentSourceImpl[]
   }> {
-    console.log(`[rag] Scanning for offline changes in database "${this.name}"`)
+    // console.log(`[rag] Scanning for offline changes in database "${this.name}"`)
     
     const added: Array<{docSource: DocumentSourceImpl, parentFolder?: DocumentSourceImpl}> = []
     const modified: DocumentSourceImpl[] = []
@@ -412,7 +433,9 @@ export default class DocumentBaseImpl {
       await this.scanDocumentForChanges(document, added, modified, deleted)
     }
 
-    console.log(`[rag] Offline scan complete: ${added.length} added, ${modified.length} modified, ${deleted.length} deleted`)
+    if (added.length > 0 || modified.length > 0 || deleted.length > 0) {
+      console.log(`[rag] Offline scan complete: ${added.length} added, ${modified.length} modified, ${deleted.length} deleted`)
+    }
     
     return { added, modified, deleted }
   }
@@ -455,7 +478,7 @@ export default class DocumentBaseImpl {
       for (const filePath of files) {
         if (!existingPaths.has(filePath)) {
           // Found a new file that wasn't tracked before
-          const newDocSource = new DocumentSourceImpl(uuidv4(), 'file', filePath)
+          const newDocSource = new DocumentSourceImpl(crypto.randomUUID(), 'file', filePath)
           
           added.push({
             docSource: newDocSource,

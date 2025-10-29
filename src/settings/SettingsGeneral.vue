@@ -1,10 +1,10 @@
 <template>
-  <div class="tab-content form form-vertical form-large">
+  <div class="tab-content">
     <header>
       <div class="title">{{ t('settings.tabs.general') }}</div>
     </header>
-    <main>
-      <div class="form-field appearance">
+    <main class="form form-vertical form-large">
+      <div class="form-field appearance" v-if="store.isFeatureEnabled('appearance')">
         <label>{{ t('settings.general.theme') }}</label>
         <div class="form-subgroup">
           <div @click="setAppearanceTheme('light')" :class="{ selected: appearance == 'light' }">
@@ -21,14 +21,14 @@
           </div>
         </div>
       </div>
-      <div class="form-field lightTint" v-if="appearanceTheme.getTheme() === 'light'">
+      <!-- <div class="form-field lightTint" v-if="store.isFeatureEnabled('appearance') && appearanceTheme.getTheme() === 'light'">
         <label>{{ t('settings.general.lightTint') }}</label>
         <select v-model="lightTint" @change="onTintChange">
           <option value="white">{{ t('settings.general.tints.white') }}</option>
           <option value="gray">{{ t('settings.general.tints.gray') }}</option>
         </select>
-      </div>
-      <div class="form-field darkTint" v-if="appearanceTheme.getTheme() === 'dark'">
+      </div> -->
+      <div class="form-field darkTint" v-if="store.isFeatureEnabled('appearance')">
         <label>{{ t('settings.general.darkTint') }}</label>
         <select v-model="darkTint" @change="onTintChange">
           <option value="black">{{ t('settings.general.tints.black') }}</option>
@@ -44,16 +44,16 @@
         <button @click.prevent="onResetTips">{{ t('common.reset') }}</button>
       </div>
       <div class="form-field horizontal run-at-login">
-        <input type="checkbox" v-model="runAtLogin" @change="save" />
-        <label>{{ t('settings.general.runAtLogin') }}</label>
+        <input type="checkbox" id="run-at-login" v-model="runAtLogin" @change="save" />
+        <label for="run-at-login">{{ t('settings.general.runAtLogin') }}</label>
       </div>
       <div class="form-field horizontal hide-on-startup">
-        <input type="checkbox" v-model="hideOnStartup" @change="save" />
-        <label>{{ t('settings.general.hideOnStartup') }}</label>
+        <input type="checkbox" id="hide-on-startup" v-model="hideOnStartup" @change="save" />
+        <label for="hide-on-startup">{{ t('settings.general.hideOnStartup') }}</label>
       </div>
       <div class="form-field horizontal keep-running">
-        <input type="checkbox" v-model="keepRunning" @change="save" />
-        <label>{{ t('settings.general.keepInStatusBar') }}</label>
+        <input type="checkbox" id="keep-running" v-model="keepRunning" @change="save" />
+        <label for="keep-running">{{ t('settings.general.keepInStatusBar') }}</label>
       </div>
     </main>
   </div>

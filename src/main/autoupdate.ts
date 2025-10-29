@@ -19,26 +19,21 @@ export default class AutoUpdater {
 
   private initialize = () => {
 
-    // not available on mas
-    if (process.mas) {
-      return
-    }
-
     // localization
     const t = useI18n(this.app)
 
     // basic setup
     const server = 'https://update.electronjs.org'
     const feed = `${server}/nbonamy/witsy/${process.platform}-${process.arch}/${this.app.getVersion()}`
-    console.log('Checking for updates at', feed)
+    console.log('[update] Checking for updates at', feed)
     autoUpdater.setFeedURL({ url: feed })
 
     // error
     autoUpdater.on('error', (error) => {
-      console.error('Error while checking for updates', error)
+      console.error('[update] Error while checking for updates', error)
       this.downloading = false
       if (this.manualUpdate) {
-        dialog.showErrorBox('Witsy', t('autoupdate.error'))
+        dialog.showErrorBox(t('common.appName'), t('autoupdate.error'))
       } 
     })
 
@@ -49,12 +44,12 @@ export default class AutoUpdater {
 
     // available
     autoUpdater.on('update-available', () => {
-      console.log('Update available. Downloading…')
+      console.log('[update] Update available. Downloading…')
       this.downloading = true
       if (this.manualUpdate) {
         dialog.showMessageBox({
           type: 'info',
-          message: 'Witsy',
+          message: t('common.appName'),
           detail: t('autoupdate.available'),
         })
       }
@@ -63,11 +58,11 @@ export default class AutoUpdater {
     // not available
     autoUpdater.on('update-not-available', () => {
       if (!this.downloading) {
-        console.log('Update not available')
+        console.log('[update] Update not available')
         if (this.manualUpdate) {
           dialog.showMessageBox({
             type: 'info',
-            message: 'Witsy',
+            message: t('common.appName'),
             detail: t('autoupdate.uptodate'),
           })
         }
@@ -84,14 +79,14 @@ export default class AutoUpdater {
       
     // before quit for update
     autoUpdater.on('before-quit-for-update', () => {
-      console.log('Before quit update')
+      console.log('[update] Before quit update')
       this.hooks.preInstall?.()
     })
 
     // check now and schedule
     autoUpdater.checkForUpdates()
     setInterval(() => {
-      console.log('Scheduled update-check')
+      console.log('[update] Scheduled update-check')
       this.manualUpdate = false;
       autoUpdater.checkForUpdates()
     }, 60*60*1000)
@@ -109,7 +104,7 @@ export default class AutoUpdater {
       const t = useI18n(this.app)
       dialog.showMessageBox({
         type: 'info',
-        message: 'Witsy',
+        message: t('common.appName'),
         detail: t('autoupdate.downloading'),
       })
     } else {
@@ -120,7 +115,7 @@ export default class AutoUpdater {
 
   install = () => {
     if (this.updateAvailable) {
-      console.log('Applying update')
+      console.log('[update] Applying update')
       this.hooks.preInstall?.()
       // https://github.com/electron-userland/electron-builder/issues/3402
       setImmediate(() => autoUpdater.quitAndInstall())

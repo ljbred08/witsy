@@ -1,15 +1,29 @@
 <template>
-  <div class="form tab-content form-vertical form-large">
+  <div class="tab-content">
     <header>
       <div class="title">{{ t('settings.tabs.advanced') }}</div>
     </header>
-    <main>
+    <main class="form form-vertical form-large">
       <div class="form-field">
         <label>{{ t('settings.advanced.header') }}</label>
       </div>
       <div class="form-field autosave horizontal">
-        <input type="checkbox" v-model="autoSavePrompt" @change="save" />
-        <label>{{ t('settings.advanced.autoSavePrompt') }}</label>
+        <input type="checkbox" id="auto-save-prompt" v-model="autoSavePrompt" @change="save" />
+        <label for="auto-save-prompt">{{ t('settings.advanced.autoSavePrompt') }}</label>
+      </div>
+      <div class="form-field safe-keys horizontal">
+        <input type="checkbox" id="safe-keys" v-model="safeKeys" @change="save" />
+        <label for="safe-keys">{{ t('settings.advanced.safeKeys') }}</label>
+      </div>
+      <div>
+        <div class="form-field http-endpoints horizontal">
+          <input type="checkbox" id="http-endpoints" v-model="enableHttpEndpoints" @change="save" />
+          <label for="http-endpoints">{{ t('settings.advanced.enableHttpEndpoints') }}</label>
+        </div>
+        <div style="margin-left: 32px; font-style: italic;" v-if="enableHttpEndpoints">{{ t('settings.advanced.httpServer', { port: httpPort }) }}</div>
+      </div>
+      <div class="form-field cli-install">
+        <button @click="installCLI" :disabled="!enableHttpEndpoints">{{ t('settings.advanced.installCLI') }}</button>
       </div>
       <label>&nbsp;</label>
       <div class="form-field proxy">
@@ -71,23 +85,29 @@
 </template>
 
 <script setup lang="ts">
-import { t, i18nInstructions } from '../services/i18n'
+import { i18nInstructions, t } from '../services/i18n'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { store } from '../services/store'
-import { anyDict } from '../types/index'
 import { ProxyMode } from '../types/config'
+import { anyDict } from '../types/index'
 
 const prompt = ref(null)
 const isPromptOverridden = ref(false)
 const instructions = ref('instructions.chat.docquery')
-const autoSavePrompt = ref(null)
+const autoSavePrompt = ref(false)
+const safeKeys = ref(true)
+const enableHttpEndpoints = ref(true)
 const proxyMode = ref<ProxyMode>('default')
 const customProxy = ref('')
 const imageResize = ref(null)
 
+const httpPort = computed(() => window.api.app.getHttpPort())
+
 const load = () => {
   autoSavePrompt.value = store.config.prompt.autosave
+  safeKeys.value = store.config.general.safeKeys
+  enableHttpEndpoints.value = store.config.general.enableHttpEndpoints
   proxyMode.value = store.config.general.proxyMode
   customProxy.value = store.config.general.customProxy
   imageResize.value = store.config.llm.imageResize ?? 768
@@ -108,6 +128,8 @@ const save = () => {
 
   // basic stuff
   store.config.prompt.autosave = autoSavePrompt.value
+  store.config.general.safeKeys = safeKeys.value
+  store.config.general.enableHttpEndpoints = enableHttpEndpoints.value
   store.config.general.proxyMode = proxyMode.value
   store.config.general.customProxy = customProxy.value
   store.config.llm.imageResize = parseInt(imageResize.value)
@@ -124,12 +146,19 @@ const save = () => {
       }
     } else if (!acc[key]) {
       acc[key] = {}
-    } 
+    }
     return acc[key]
   }, store.config as anyDict)
 
   // save
   store.saveSettings()
+}
+
+const installCLI = async () => {
+  const result = await window.api.cli.install()
+  if (result.success) {
+    alert(t('cli.install.success'))
+  }
 }
 
 defineExpose({ load })

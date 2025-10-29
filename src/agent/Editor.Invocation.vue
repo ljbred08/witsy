@@ -19,12 +19,31 @@
         <span v-html="nextRuns"></span>
       </div>
 
-      <!-- <div class="form-field">
-        <label for="webhook">{{ t('agent.trigger.webhook') }}</label>
-        <input type="text" name="webhook" v-model="webhook" />
-      </div> -->
+      <template v-if="store.config.general.enableHttpEndpoints">
+        <div class="form-field">
+          <label>{{ t('agent.trigger.webhook') }}</label>
+        </div>
 
-      <template v-if="agent.schedule && promptInputs(0).length">
+        <div class="form-field horizontal">
+          <input type="checkbox" v-model="webhookEnabled" @change="onWebhookToggle" />
+          <span>{{ t('agent.trigger.webhook_description') }}</span>
+        </div>
+
+        <div class="form-field" v-if="webhookEnabled">
+          <label>{{ t('agent.trigger.webhook_url') }}</label>
+          <div class="webhook-url-container">
+            <input type="text" :value="webhookUrl" readonly />
+            <button type="button" @click="onCopyUrl" :title="t('agent.trigger.webhook_copy')">
+              <CopyIcon :size="16" />
+            </button>
+            <button type="button" @click="onRegenerateToken" :title="t('agent.trigger.webhook_regenerate')">
+              <RefreshCwIcon :size="16" />
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="(agent.schedule || webhookEnabled)&& promptInputs(0).length">
 
         <div class="form-field">
           <label for="prompt">{{ t('agent.create.invocation.variables') }}</label>
@@ -56,10 +75,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, PropType } from 'vue'
+import { ref, computed, watch, onMounted, PropType } from 'vue'
+import { RefreshCwIcon, CopyIcon } from 'lucide-vue-next'
 import { t } from '../services/i18n'
 import { CronExpressionParser } from 'cron-parser'
 import { extractPromptInputs } from '../services/prompt'
+import { store } from '../services/store'
 import WizardStep from '../components/WizardStep.vue'
 import Scheduler from '../components/Scheduler.vue'
 import Agent from '../models/agent'
@@ -82,6 +103,28 @@ const props = defineProps({
 const emit = defineEmits(['prev', 'next'])
 
 const invocationInputs = ref<Record<string, string>>({})
+const httpPort = ref<number>(8090)
+const agentApiBasePath = ref<string>(window.api.agents.getApiBasePath())
+
+const webhookEnabled = computed({
+  get: () => !!props.agent.webhookToken,
+  set: async (value: boolean) => {
+    if (value) {
+      const token = await window.api.agents.generateWebhookToken(
+        store.config.workspaceId,
+        props.agent.uuid
+      )
+      props.agent.webhookToken = token
+    } else {
+      props.agent.webhookToken = null
+    }
+  }
+})
+
+const webhookUrl = computed(() => {
+  if (!props.agent.webhookToken) return ''
+  return `http://localhost:${httpPort.value}${agentApiBasePath.value}/run/${props.agent.webhookToken}`
+})
 
 const nextRuns = computed(() => {
   if (!props.agent.schedule) return ''
@@ -130,12 +173,40 @@ const onNext = () => {
   emit('next')
 }
 
+const onWebhookToggle = async () => {
+  // webhookEnabled computed setter handles this
+}
+
+const onRegenerateToken = async () => {
+  const token = await window.api.agents.generateWebhookToken(
+    store.config.workspaceId,
+    props.agent.uuid
+  )
+  props.agent.webhookToken = token
+}
+
+const onCopyUrl = () => {
+  navigator.clipboard.writeText(webhookUrl.value)
+}
+
+const validate = (): string|null => {
+  return null
+}
+
 // Watch for visibility changes to prepare inputs
 watch(() => props.visible, (newVisible) => {
   if (newVisible) {
     prepareAgentInvocationInputs()
   }
 })
+
+// Load HTTP port on mount
+onMounted(async () => {
+  httpPort.value = await window.api.app.getHttpPort()
+})
+
+defineExpose({ validate })
+
 </script>
 
 <style scoped>
@@ -147,6 +218,24 @@ watch(() => props.visible, (newVisible) => {
 .variables {
   td:first-child {
     width: 33%;
+  }
+}
+
+.webhook-url-container {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+
+  input {
+    flex: 1;
+  }
+
+  button {
+    padding: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 }
 </style>

@@ -1,5 +1,5 @@
 
-import { A2APromptOpts } from '../types/index'
+import { A2APromptOpts } from '../types/agents'
 import { Message, MessageSendParams, Task, TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from '@a2a-js/sdk'
 import Agent from '../models/agent'
 // @ts-expect-error unknown why this is a linting error
@@ -93,7 +93,7 @@ export default class A2AClient {
       for await (const event of stream) {
 
         // log
-        console.log(`[a2a] Received event: ${JSON.stringify(event)}`);
+        //console.log(`[a2a] Received event: ${JSON.stringify(event)}`);
         
         // the first event is often the Task object itself, establishing the ID.
         if (event.kind === 'task') {

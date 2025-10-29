@@ -1,5 +1,5 @@
 <template>
-  <ModalDialog id="prompt-builder" ref="dialog" @save="onSave">
+  <ModalDialog id="prompt-builder" ref="dialog" @save="onSave" width="24rem">
     <template #header>
       {{ title }}
     </template> 
@@ -12,8 +12,8 @@
     </template>
     <template #footer>
       <div class="buttons">
-        <button name="cancel" @click="onCancel" class="alert-neutral" formnovalidate>{{ t('common.cancel') }}</button>
-        <button name="save" @click="onSave" class="alert-confirm">{{ confirmText }}</button>
+        <button name="cancel" @click="onCancel" class="tertiary" formnovalidate>{{ t('common.cancel') }}</button>
+        <button name="save" @click="onSave" class="primary">{{ confirmText }}</button>
       </div>
     </template>
   </ModalDialog>
@@ -108,8 +108,6 @@ defineExpose({
 <style>
 
 #prompt-builder .swal2-popup {
-  max-width: 24rem !important;
-
   textarea {
     min-height: 8lh;
     resize: vertical;

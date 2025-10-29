@@ -6,29 +6,31 @@ import { PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
 import Plugin, { PluginConfig } from './plugin'
 import ImageCreator from '../services/image'
 
+export const kImagePluginName = 'image_generation'
+
 export default class extends Plugin {
 
   creator: ImageCreator
   
-  constructor(config: PluginConfig) {
-    super(config)
+  constructor(config: PluginConfig, workspaceId: string) {
+    super(config, workspaceId)
     this.creator = new ImageCreator()
   }
 
   isEnabled(): boolean {
     return this.config?.enabled && (
-      (this.config.engine == 'openai' && store.config?.engines.openai.apiKey?.trim().length > 0) ||
-      (this.config.engine == 'google' && store.config?.engines.google.apiKey?.trim().length > 0) ||
-      (this.config.engine == 'xai' && store.config?.engines.xai.apiKey?.trim().length > 0) ||
-      (this.config.engine == 'replicate' && store.config?.engines.replicate.apiKey?.trim().length > 0) ||
-      (this.config.engine == 'falai' && store.config?.engines.falai.apiKey?.trim().length > 0) ||
-      (this.config.engine == 'huggingface' && store.config?.engines.huggingface.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'openai' && store.config?.engines?.openai?.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'google' && store.config?.engines?.google?.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'xai' && store.config?.engines?.xai?.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'replicate' && store.config?.engines?.replicate?.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'falai' && store.config?.engines?.falai?.apiKey?.trim().length > 0) ||
+      (this.config.engine == 'huggingface' && store.config?.engines?.huggingface?.apiKey?.trim().length > 0) ||
       (this.config.engine == 'sdwebui')
     )
   }
 
   getName(): string {
-    return 'image_generation'
+    return kImagePluginName
   }
 
   getDescription(): string {

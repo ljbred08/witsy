@@ -1,6 +1,8 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { strDict } from './index'
+import { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
+import { ToolSelection } from './llm'
 
 export type McpServerType = 'stdio' | 'sse' | 'http'
 
@@ -19,6 +21,15 @@ export type McpServer = {
   cwd?: string
   env?: strDict
   headers?: strDict
+  oauth?: McpOAuthConfig
+  toolSelection: ToolSelection
+}
+
+export type McpOAuthConfig = {
+  tokens?: OAuthTokens
+  clientId?: string
+  clientSecret?: string
+  scope?: string
 }
 
 export type McpClient = {
@@ -32,6 +43,14 @@ export type McpTool = {
   description: string
 }
 
+export type McpToolUnique = {
+  uuid: string
+} & McpTool
+
+export type McpServerWithTools = McpServer & {
+  tools: McpToolUnique[]
+}
+
 export type McpClaudeServer = {
   command: string
   args: string[]
@@ -41,7 +60,7 @@ export type McpClaudeServer = {
 }
 
 export type McpServerStatus = McpServer & {
-  tools: string[]
+  tools?: string[] | null
 }
 
 export type McpStatus = {

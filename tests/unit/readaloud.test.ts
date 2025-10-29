@@ -1,12 +1,10 @@
 
 import { vi, beforeEach, expect, test } from 'vitest'
 import { app, Notification } from 'electron'
-import { createAutomatorMock } from '../mocks'
 import ReadAloud from '../../src/automations/readaloud'
+import Automator from '../../src/automations/automator'
 import * as window from '../../src/main/window'
 import * as utils from '../../src/main/utils'
-
-let selectedText: string|null = ''
 
 // mock electron
 vi.mock('electron', async() => {
@@ -17,11 +15,15 @@ vi.mock('electron', async() => {
       getPath: vi.fn(() => ''),
       getLocale: vi.fn(() => 'en-US'),
     },
+    safeStorage: {
+      isEncryptionAvailable: vi.fn(() => true),
+      encryptString: vi.fn((data) => `encrypted-${data}`),
+      decryptString: vi.fn((data) => data.toString('latin1'))
+    },
     Notification
   }
 })
 
-// mock windows
 vi.mock('../../src/main/window.ts', async () => {
   return {
     releaseFocus: vi.fn(),
@@ -30,16 +32,15 @@ vi.mock('../../src/main/window.ts', async () => {
   }
 })
 
+vi.mock('../../src/main/i18n', () => ({
+  useI18n: vi.fn(() => (key: string) => key)
+}))
+
 vi.mock('../../src/main/utils', async () => {
   return {
     wait: vi.fn(),
     putCachedText: vi.fn(() => 'textId')
   }
-})
-
-// mock automator
-vi.mock('../../src/automations/automator.ts', async () => {
-  return createAutomatorMock(() => ({ selectedText }))
 })
 
 beforeEach(() => {
@@ -48,7 +49,7 @@ beforeEach(() => {
 
 test('Open readaloud window', async () => {
 
-  selectedText = 'Grabbed text'
+  vi.mocked(Automator.prototype.getSelectedText).mockResolvedValue('Grabbed text')
   
   await ReadAloud.read(app, 100)
   expect(utils.putCachedText).toHaveBeenLastCalledWith('Grabbed text')
@@ -61,22 +62,22 @@ test('Open readaloud window', async () => {
 
 test('Show no text error notification', async () => {
 
-  selectedText = ''
+  vi.mocked(Automator.prototype.getSelectedText).mockResolvedValue('')
   
   await ReadAloud.read(app, 100)
   expect(utils.putCachedText).not.toHaveBeenCalled()
   expect(window.openReadAloudPalette).not.toHaveBeenCalled()
-    expect(Notification).toHaveBeenLastCalledWith({ title: 'Witsy', body: 'Please highlight the text you want to read aloud.' })
+    expect(Notification).toHaveBeenLastCalledWith({ title: 'common.appName', body: 'automation.readAloud.emptyText' })
 
   })
 
 test('Show no grab error notification', async () => {
 
-  selectedText = null
+  vi.mocked(Automator.prototype.getSelectedText).mockResolvedValue(null as any)
   
   await ReadAloud.read(app, 100)
   expect(utils.putCachedText).not.toHaveBeenCalled()
   expect(window.openReadAloudPalette).not.toHaveBeenCalled()
-  expect(Notification).toHaveBeenLastCalledWith({ title: 'Witsy', body: 'An error occurred while trying to grab the text. Please check Privacy & Security settings.' })
+  expect(Notification).toHaveBeenLastCalledWith({ title: 'common.appName', body: 'automation.grabError' })
 
 })

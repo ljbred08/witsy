@@ -5,10 +5,12 @@ import { PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
 import Plugin, { PluginConfig } from './plugin'
 import * as vega from 'vega'
 
+export const kVegaPluginName = 'vega_chart_creation'
+
 export default class extends Plugin {
 
-  constructor(config: PluginConfig) {
-    super(config)
+  constructor(config: PluginConfig, workspaceId: string) {
+    super(config, workspaceId)
   }
 
   isEnabled(): boolean {
@@ -16,7 +18,7 @@ export default class extends Plugin {
   }
 
   getName(): string {
-    return 'vega_chart_creation'
+    return kVegaPluginName
   }
 
   getDescription(): string {

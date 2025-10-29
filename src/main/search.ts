@@ -1,47 +1,106 @@
 
 import { BrowserWindow } from 'electron'
-import { getTextContent } from './text'
-import { deleteFile } from './file'
 import * as fs from 'fs'
-import * as path from 'path'
 import * as os from 'os'
+import * as path from 'path'
+import { LocalSearchResponse, LocalSearchResult } from '../types/index'
+import { deleteFile } from './file'
+import { getTextContent } from './text'
+import { getCleanUserAgent } from './utils'
 
 const grabGoogleResults = `
   const results = []
   const search = document.getElementById("search")
-  search.querySelectorAll("a").forEach((link) => {
-    const result = link.closest("div")
-    const title = result.querySelector("h3")
-    const url = link.getAttribute("href")
-    const item = {
-      title: title?.textContent || "",
-      url,
-    }
-    if (!item.title || !item.url) return
-    results.push(item)
-  })
-  results
+  if (!search) {
+    const el = document.querySelector('#recaptcha')
+    el ? 'captcha' : 'unknown'
+  } else {
+    search.querySelectorAll("a").forEach((link) => {
+      const title = link.querySelector("h3")
+      const url = link.getAttribute("href")
+      const item = {
+        el: link.outerHTML,
+        title: title?.textContent || "",
+        url,
+      }
+      if (!item.title || !item.url) return
+      results.push(item)
+    })
+    results
+  }
 `
-
-export type LocalSearchResult = {
-  url: string
-  title: string
-  content: string
-}
 
 export default class LocalSearch {
 
-  public search(query: string, num: number = 5): Promise<LocalSearchResult[]> {
+  private searchWindow: BrowserWindow | null = null
+
+  public async test(): Promise<boolean> {
+
+    try {
+      
+      const response = await this.search('What is Witsy?', 1, true)
+      console.log('Test search results:', response.results?.map(r => r.url))
+      if (response.results?.length > 0) {
+        return true
+      }
+    } catch (e) {
+      console.error('Test search error:', e)
+    }
+
+    // too bad
+    return false
+  
+  }
+
+  public search(query: string, num: number = 5, testMode: boolean = false, abortSignal?: AbortSignal): Promise<LocalSearchResponse> {
 
     return new Promise((resolve, reject) => {
 
+      // Check if already aborted
+      if (abortSignal?.aborted) {
+        reject(new Error('Operation cancelled'))
+        return
+      }
+
+      //const url = 'https://2captcha.com/demo/recaptcha-v2'
       const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`
 
-      // open a new window
-      const win = this.openHiddenWindow()
+      // get or create the persistent search window
+      const win = this.getOrCreateSearchWindow()
+
+      // show window in test mode
+      if (testMode) {
+        win.show()
+      }
+
+      // Track if we've resolved/rejected to avoid double resolution
+      let hasResolved = false
+
+      // Set up abort listener
+      abortSignal?.addEventListener('abort', () => {
+        if (!hasResolved) {
+          hasResolved = true
+          if (testMode) {
+            win.hide()
+          }
+          reject(new Error('Operation cancelled'))
+        }
+      }, { once: true })
 
       // get ready to grab the results
       win.webContents.on('did-finish-load', async () => {
+
+        // Check abort before processing
+        if (abortSignal?.aborted) {
+          if (!hasResolved) {
+            hasResolved = true
+            if (testMode) {
+              win.hide()
+            }
+            reject(new Error('Operation cancelled'))
+          }
+          return
+        }
 
         try {
         
@@ -50,10 +109,41 @@ export default class LocalSearch {
 
           // get the results
           const googleResults: LocalSearchResult[] = await win.webContents.executeJavaScript(grabGoogleResults)
+          if (!Array.isArray(googleResults)) {
+            if (testMode) {
+              win.hide()
+            }
+            reject({ error: googleResults === 'captcha'
+              ? 'Inform the user that a CAPTCHA mechanism is preventing search to work. They need to go Settings | Plugins | Web Search and click the "Test local search" button'
+              : 'An unknown error happened while trying to search locally. Please try again later.'
+            })
+            return
+          }
+
+          // log
           console.log(`[search] found ${googleResults.length} results`)
 
-          // close the window now
-          this.tryCloseWindow(win)
+          // hide window in test mode after results are extracted
+          if (testMode) {
+            win.hide()
+          }
+
+          // in real mode, set up random click on a result (5-10 seconds delay)
+          if (!testMode && googleResults.length > 0) {
+            const randomDelay = 5000 + Math.random() * 5000 // 5-10 seconds
+            const randomIndex = Math.floor(Math.random() * googleResults.length)
+            setTimeout(() => {
+              // click the random result
+              win.webContents.executeJavaScript(`
+                const links = document.querySelectorAll("#search a");
+                if (links[${randomIndex}]) {
+                  links[${randomIndex}].click();
+                }
+              `).catch(err => {
+                console.error('[search] failed to click result:', err)
+              })
+            }, randomDelay)
+          }
 
           // now iterate
           const urls = new Set()
@@ -88,13 +178,21 @@ export default class LocalSearch {
           }
 
           // done
-          resolve(results)
+          if (!hasResolved) {
+            hasResolved = true
+            resolve({ results })
+          }
 
         } catch (e) {
 
-          // done
-          this.tryCloseWindow(win)
-          reject(e)
+          // hide window in test mode on error
+          if (testMode) {
+            win.hide()
+          }
+          if (!hasResolved) {
+            hasResolved = true
+            reject(e)
+          }
 
         }
 
@@ -135,7 +233,7 @@ export default class LocalSearch {
         item.setSavePath(tempPath)
         
         // handle download completion
-        item.once('done', async (event, state) => {
+        item.once('done', async (_event, state) => {
 
           try {
           
@@ -206,7 +304,7 @@ export default class LocalSearch {
       })
 
       //  catch errors
-      win.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
 
         // only one resolve
         if (hasResolved) {
@@ -230,6 +328,50 @@ export default class LocalSearch {
 
   }
 
+  protected getOrCreateSearchWindow(): BrowserWindow {
+    if (!this.searchWindow || this.searchWindow.isDestroyed()) {
+      this.searchWindow = this.createSearchWindow()
+    }
+    return this.searchWindow
+  }
+
+  protected createSearchWindow(): BrowserWindow {
+
+    // open a new window
+    const win = new BrowserWindow({
+      width: 800,
+      height: 600,
+      show: false,
+      frame: false,
+      focusable: true,
+      hiddenInMissionControl: true,
+      skipTaskbar: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        autoplayPolicy: 'user-gesture-required',
+        disableDialogs: true,
+        partition: 'persist:search',
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        experimentalFeatures: true,
+      },
+    })
+
+    // Set clean user agent (strip Witsy and Electron identifiers)
+    const originalUA = win.webContents.session.getUserAgent()
+    const cleanUA = getCleanUserAgent(originalUA)
+    win.webContents.session.setUserAgent(cleanUA)
+
+    // prevent memory leaks
+    win.webContents.setMaxListeners(20)
+
+    // done
+    return win
+
+  }
+
   protected openHiddenWindow(): BrowserWindow {
 
     // open a new window
@@ -247,8 +389,17 @@ export default class LocalSearch {
         sandbox: true,
         autoplayPolicy: 'user-gesture-required',
         disableDialogs: true,
+        partition: 'persist:search',
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        experimentalFeatures: true,
       },
     })
+
+    // Set clean user agent (strip Witsy and Electron identifiers)
+    const originalUA = win.webContents.session.getUserAgent()
+    const cleanUA = getCleanUserAgent(originalUA)
+    win.webContents.session.setUserAgent(cleanUA)
 
     // prevent memory leaks
     win.webContents.setMaxListeners(20)

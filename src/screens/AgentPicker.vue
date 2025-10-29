@@ -1,5 +1,5 @@
 <template>
-  <ModalDialog id="agent-picker" ref="dialog">
+  <ModalDialog id="agent-picker" ref="dialog" width="36rem">
     <template #header>
       {{ t('agent.picker.title') }}
     </template>
@@ -7,7 +7,7 @@
       <div class="agent-list">
         <div v-for="agent in runnableAgents" :key="agent.uuid" class="agent-item" @click="onSelectAgent(agent)">
           <div class="agent-icon">
-            <BIconRobot v-if="agent.source === 'witsy'" />
+            <AgentIcon v-if="agent.source === 'witsy'" />
             <LogoA2A v-else-if="agent.source === 'a2a'" />
           </div>
           <div class="agent-info">
@@ -19,7 +19,7 @@
     </template>
     <template #footer>
       <div class="buttons">
-        <button @click="onCancel" class="alert-neutral" name="cancel">{{ t('common.cancel') }}</button>
+        <button @click="onCancel" class="tertiary" name="cancel">{{ t('common.cancel') }}</button>
       </div>
     </template>
   </ModalDialog>
@@ -27,13 +27,14 @@
 
 <script setup lang="ts">
 
-import { ref, computed } from 'vue'
+import { computed, ref } from 'vue'
+import LogoA2A from '../../assets/a2a.svg?component'
+import AgentIcon from '../../assets/agent.svg?component'
+import ModalDialog from '../components/ModalDialog.vue'
+import Dialog from '../composables/dialog'
 import { t } from '../services/i18n'
 import { store } from '../services/store'
-import { Agent } from '../types/index'
-import Dialog from '../composables/dialog'
-import ModalDialog from '../components/ModalDialog.vue'
-import LogoA2A from '../../assets/a2a.svg?component'
+import { Agent } from '../types/agents'
 
 import useEventBus from '../composables/event_bus'
 const { emitEvent } = useEventBus()
@@ -97,8 +98,6 @@ defineExpose({
 
 #agent-picker .swal2-popup {
   
-  max-width: 36rem !important;
-
   .agent-list {
     max-height: 400px;
     overflow-y: auto;
@@ -132,9 +131,9 @@ defineExpose({
   .agent-icon {
     flex-shrink: 0;
     svg {
-      width: 1.5rem;
-      height: 1.5rem;
-      fill: var(--text-color);
+      width: var(--icon-xl);
+      height: var(--icon-xl);
+      color: var(--text-color);
     }
   }
 
@@ -146,15 +145,15 @@ defineExpose({
     gap: 0.25rem;
 
     .agent-name {
-      font-weight: 600;
-      font-size: 11.5pt;
+      font-weight: var(--font-weight-semibold);
+      font-size: 15.5px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
     .agent-description {
-      font-size: 10.5pt;
+      font-size: 14px;
       opacity: 0.8;
       white-space: nowrap;
       overflow: hidden;

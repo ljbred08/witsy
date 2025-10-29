@@ -2,9 +2,9 @@
 import { vi, beforeAll, beforeEach, afterAll, expect, test } from 'vitest'
 import { mount, VueWrapper, enableAutoUnmount } from '@vue/test-utils'
 import { useWindowMock, useBrowserMock } from '../mocks/window'
-import { createDialogMock, createEventBusMock, createI18nMock, emitEventMock } from '../mocks'
+import { createI18nMock } from '../mocks'
+import { emitEventMock } from '../../vitest.setup'
 import { stubTeleport } from '../mocks/stubs'
-import { findModelSelectoPlus } from '../utils'
 import { store } from '../../src/services/store'
 import ChatArea from '../../src/components/ChatArea.vue'
 import Message from '../../src/models/message'
@@ -13,16 +13,8 @@ import { defaultCapabilities } from 'multi-llm-ts'
 
 enableAutoUnmount(afterAll)
 
-vi.mock('../../src/composables/dialog', async () => {
-  return createDialogMock()
-})
-
 vi.mock('../../src/services/i18n', async () => {
   return createI18nMock()
-})
-
-vi.mock('../../src/composables/event_bus', async () => {
-  return createEventBusMock()
 })
 
 beforeAll(() => {
@@ -49,6 +41,7 @@ let chat: Chat|null = null
 beforeEach(() => {
   chat = new Chat('New Chat')
   chat.setEngineModel('mock', 'chat')
+  store.isFeatureEnabled = () => true
 })
 
 const addMessagesToChat = () => {
@@ -57,11 +50,12 @@ const addMessagesToChat = () => {
 }
 
 test('Empty chat', async () => {
+  store.isFeatureEnabled = (feature: string) => feature != 'chat.temporary'
   const wrapper: VueWrapper<any> = mount(ChatArea, { props: { chat: new Chat() } } )
   expect(wrapper.exists()).toBe(true)
   expect(wrapper.find('.sp-main > header').exists()).toBe(true)
   expect(wrapper.find('.sp-main > header .title').text()).toBe('')
-  expect(wrapper.find('.sp-main > header .menu-icon').exists()).toBe(true)
+  expect(wrapper.find('.sp-main > header .menu').exists()).toBe(false)
   expect(wrapper.find('.sp-main .model-settings').exists()).toBe(true)
   expect(wrapper.find('.sp-main .model-settings').classes()).not.toContain('visible')
   expect(wrapper.find('.sp-main .messages').exists()).toBe(false)
@@ -75,7 +69,7 @@ test('With chat', async () => {
   expect(wrapper.exists()).toBe(true)
   expect(wrapper.find('.sp-main > header').exists()).toBe(true)
   expect(wrapper.find('.sp-main > header .title').text()).toBe('New Chat')
-  expect(wrapper.find('.sp-main > header .menu-icon').exists()).toBe(true)
+  expect(wrapper.find('.sp-main > header .menu').exists()).toBe(true)
   expect(wrapper.find('.model-settings').exists()).toBe(true)
   expect(wrapper.find('.sp-main .model-settings').classes()).not.toContain('visible')
   expect(wrapper.find('.sp-main .messages').exists()).toBe(true)
@@ -85,50 +79,45 @@ test('With chat', async () => {
 })
 
 test('Context menu empty chat', async () => {
-  addMessagesToChat()
-  const wrapper: VueWrapper<any> = mount(ChatArea, { props: { chat: new Chat() } } )
-  await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-  expect(wrapper.vm.chatMenuActions).toStrictEqual([
-    { label: 'chat.actions.makeTemporary', action: 'toggle_temp', disabled: false },
-    { label: 'common.rename', action: 'rename', disabled: false },
-    { label: 'chat.actions.exportMarkdown', action: 'exportMarkdown', disabled: true },
-    { label: 'chat.actions.exportPdf', action: 'exportPdf', disabled: true },
-    { label: 'common.delete', action: 'delete', disabled: true }
-  ])
+  const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: new Chat('title') } } )
+  await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+  expect(wrapper.find('.context-menu .item').exists()).toBe(true)
+  const items = wrapper.findAll('.context-menu .item')
+  expect(items.length).toBe(5)
+  expect(items[2].classes()).toContain('disabled') // exportMarkdown
+  expect(items[3].classes()).toContain('disabled') // exportPdf
+  expect(items[4].classes()).toContain('disabled') // delete
 })
 
 test('Context menu normal chat', async () => {
   addMessagesToChat()
-  const wrapper: VueWrapper<any> = mount(ChatArea, { props: { chat: chat! } } )
-  await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-  expect(wrapper.vm.chatMenuActions).toStrictEqual([
-    { label: 'chat.actions.makeTemporary', action: 'toggle_temp', disabled: false },
-    { label: 'common.rename', action: 'rename', disabled: false },
-    { label: 'chat.actions.exportMarkdown', action: 'exportMarkdown', disabled: false },
-    { label: 'chat.actions.exportPdf', action: 'exportPdf', disabled: false },
-    { label: 'common.delete', action: 'delete', disabled: true }
-  ])
+  const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
+  await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+  expect(wrapper.find('.context-menu .item').exists()).toBe(true)
+  const items = wrapper.findAll('.context-menu .item')
+  expect(items.length).toBe(5)
+  expect(items[2].classes()).not.toContain('disabled') // exportMarkdown
+  expect(items[3].classes()).not.toContain('disabled') // exportPdf
+  expect(items[4].classes()).toContain('disabled') // delete (not saved yet)
 })
 
 test('Context menu temporary chat', async () => {
   addMessagesToChat()
   chat!.temporary = true
-  const wrapper: VueWrapper<any> = mount(ChatArea, { props: { chat: chat! } } )
-  await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-  expect(wrapper.vm.chatMenuActions).toStrictEqual([
-    { label: 'chat.actions.saveChat', action: 'toggle_temp', disabled: false },
-    { label: 'common.rename', action: 'rename', disabled: false },
-    { label: 'chat.actions.exportMarkdown', action: 'exportMarkdown', disabled: false },
-    { label: 'chat.actions.exportPdf', action: 'exportPdf', disabled: false },
-    { label: 'common.delete', action: 'delete', disabled: true }
-  ])
+  const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
+  await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+  expect(wrapper.find('.context-menu .item').exists()).toBe(true)
+  const items = wrapper.findAll('.context-menu .item')
+  expect(items.length).toBe(5)
+  expect(items[0].text()).toContain('saveChat') // toggle_temp shows "save"
 })
 
 test('Context menu temporary 1', async () => {
   expect(store.history.chats.length).toBe(0)
   const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
-  await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-  await wrapper.find('.context-menu .item[data-action=toggle_temp]').trigger('click')
+  await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+  const items = wrapper.findAll('.context-menu .item')
+  await items[0].trigger('click') // toggle_temp
   expect(chat?.temporary).toBe(true)
   expect(store.history.chats.length).toBe(0)
 })
@@ -137,8 +126,9 @@ test('Context menu temporary 2', async () => {
   addMessagesToChat()
   expect(store.history.chats.length).toBe(0)
   const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
-  await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-  await wrapper.find('.context-menu .item[data-action=toggle_temp]').trigger('click')
+  await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+  const items = wrapper.findAll('.context-menu .item')
+  await items[0].trigger('click') // toggle_temp
   expect(chat?.temporary).toBe(true)
   expect(store.history.chats.length).toBe(0)
 })
@@ -148,8 +138,9 @@ test('Context menu temporary 3', async () => {
   chat!.temporary = true
   expect(store.history.chats.length).toBe(0)
   const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
-  await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-  await wrapper.find('.context-menu .item[data-action=toggle_temp]').trigger('click')
+  await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+  const items = wrapper.findAll('.context-menu .item')
+  await items[0].trigger('click') // toggle_temp (save)
   expect(chat?.temporary).toBe(false)
   expect(store.history.chats.length).toBe(1)
 })
@@ -157,16 +148,18 @@ test('Context menu temporary 3', async () => {
 test('Context menu rename', async () => {
   addMessagesToChat()
   const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
-  await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-  await wrapper.find('.context-menu .item[data-action=rename]').trigger('click')
+  await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+  const items = wrapper.findAll('.context-menu .item')
+  await items[1].trigger('click') // rename
   expect(emitEventMock).toHaveBeenLastCalledWith('rename-chat', chat)
 })
 
 test('Context menu export Markdown', async () => {
   addMessagesToChat()
   const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
-  await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-  await wrapper.find('.context-menu .item[data-action=exportMarkdown]').trigger('click')
+  await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+  const items = wrapper.findAll('.context-menu .item')
+  await items[2].trigger('click') // exportMarkdown
   expect(window.api.file.save).toHaveBeenCalledWith({
     contents: '# New Chat\n\n## chat.role.system\n\nHello\n\n## chat.role.user\n\nHi\n\n_encoded',
     url: 'New Chat.md',
@@ -180,16 +173,18 @@ test('Context menu export Markdown', async () => {
 // test('Context menu export PDF', async () => {
 //   addMessagesToChat()
 //   const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
-//   await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-//   await wrapper.find('.context-menu .item[data-action=exportPdf]').trigger('click')
+//   await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+//   const items = wrapper.findAll('.context-menu .item')
+//   await items[3].trigger('click') // exportPdf
 // })
 
 test('Context menu delete', async () => {
   addMessagesToChat()
   store.addChat(chat!)
   const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
-  await wrapper.find('.sp-main > header .menu-icon').trigger('click')
-  await wrapper.find('.context-menu .item[data-action=delete]').trigger('click')
+  await wrapper.find('.sp-main > header .menu .trigger').trigger('click')
+  const items = wrapper.findAll('.context-menu .item')
+  await items[4].trigger('click') // delete
   expect(emitEventMock).toHaveBeenLastCalledWith('delete-chat', chat!.uuid)
 })
 
@@ -210,12 +205,10 @@ test('Model settings init chat', async () => {
   await wrapper.find('.sp-main > header .settings').trigger('click')
 
   // load engine/model with defaults
-  await wrapper.find('.model-settings select[name=engine]').setValue('mock')
-  const modelSelect = findModelSelectoPlus(wrapper)
-  await modelSelect.open()
-  await modelSelect.select(0)
+  const engineModelSelect = wrapper.findComponent({ name: 'EngineModelSelect' })
+  await engineModelSelect.vm.$emit('modelSelected', 'mock', 'chat')
+  await wrapper.vm.$nextTick()
   expect(wrapper.find<HTMLSelectElement>('.model-settings select[name=plugins]').element.value).toBe('true')
-  expect(wrapper.find<HTMLSelectElement>('.model-settings select[name=reasoning]').element.value).toBe('true')
   expect(chat?.tools).toStrictEqual([])
   expect(chat?.modelOpts?.contextWindowSize).toBe(512)
   expect(chat?.modelOpts?.maxTokens).toBe(150)
@@ -225,9 +218,8 @@ test('Model settings init chat', async () => {
   expect(chat?.modelOpts?.reasoning).toBe(true)
 
   // load engine/model without defaults
-  await wrapper.find('.model-settings select[name=engine]').setValue('openai')
-  await modelSelect.open()
-  await modelSelect.select(0)
+  await engineModelSelect.vm.$emit('modelSelected', 'openai', 'chat')
+  await wrapper.vm.$nextTick()
   expect(chat?.tools).toStrictEqual(null)
   expect(chat?.modelOpts).toBeUndefined()
 
@@ -240,8 +232,7 @@ test('Model settings update chat', async () => {
   const wrapper: VueWrapper<any> = mount(ChatArea, { ...stubTeleport, props: { chat: chat! } } )
   await wrapper.find('.sp-main > header .settings').trigger('click')
 
-  expect(wrapper.find<HTMLSelectElement>('.model-settings select[name=engine]').exists()).toBe(true)
-  expect(findModelSelectoPlus(wrapper).exists()).toBe(true)
+  expect(wrapper.findComponent({ name: 'EngineModelSelect' }).exists()).toBe(true)
   expect(wrapper.find<HTMLSelectElement>('.model-settings select[name=plugins]').exists()).toBe(true)
   expect(wrapper.find<HTMLSelectElement>('.model-settings select[name=locale]').exists()).toBe(true)
   expect(wrapper.find<HTMLTextAreaElement>('.model-settings textarea[name=instructions]').exists()).toBe(true)
@@ -255,8 +246,9 @@ test('Model settings update chat', async () => {
 
   await wrapper.find('.model-settings .toggle').trigger('click')
 
-  expect(wrapper.find<HTMLSelectElement>('.model-settings select[name=engine]').element.value).toBe('mock')
-  expect(findModelSelectoPlus(wrapper).value).toBe('chat')
+  const engineModelSelect = wrapper.findComponent({ name: 'EngineModelSelect' })
+  expect(engineModelSelect.props('engine')).toBe('mock')
+  expect(engineModelSelect.props('model')).toBe('chat')
   expect(wrapper.find<HTMLSelectElement>('.model-settings select[name=plugins]').element.value).toBe('false')
   expect(wrapper.find<HTMLSelectElement>('.model-settings select[name=locale]').element.value).toBe('')
   expect(wrapper.find<HTMLTextAreaElement>('.model-settings textarea[name=instructions]').element.value).toBe('')
@@ -362,7 +354,9 @@ test('Model settings defaults', async () => {
     model: 'chat',
     disableStreaming: false,
     tools: null,
-    temperature: 0.7
+    modelOpts: {
+      temperature: 0.7
+    }
   })
 
   // add stuff
@@ -377,8 +371,10 @@ test('Model settings defaults', async () => {
     locale: 'fr-FR',
     disableStreaming: true,
     tools: [],
-    temperature: 0.7,
-    top_k: 15
+    modelOpts: {
+      temperature: 0.7,
+      top_k: 15
+    }
   })
 
   // update and load
@@ -392,8 +388,10 @@ test('Model settings defaults', async () => {
     locale: 'fr-FR',
     disableStreaming: true,
     tools: [],
-    temperature: 0.7,
-    top_k: 15
+    modelOpts: {
+      temperature: 0.7,
+      top_k: 15
+    }
   })
 
   // clear

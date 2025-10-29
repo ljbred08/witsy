@@ -10,8 +10,6 @@
       <main>
         <div class="form form-vertical">
 
-          <div class="sp-sidebar-title">{{ t('common.settings') }}</div>
-
           <div class="form-field">
             <label>{{ t('settings.voice.engine') }}</label>
             <select name="engine" v-model="engine" @change="onChangeEngine">
@@ -53,29 +51,25 @@
 
     <div class="sp-main" @drop="onDrop" @dragover="onDragOver" @dragenter="onDragEnter" @dragleave="onDragLeave" >
 
-      <header>
-
-      </header>
-
       <main>
 
         <div class="controls">
           <div class="form form-large">
             <button name="stop" class="button" v-if="state == 'recording'" @click="onStop()">{{ t('common.stop') }}</button>
-            <button name="record" class="button" v-else @click="onRecord(false)" :disabled="state === 'processing'"><BIconMic />&nbsp;{{ t('common.record') }}</button>
+            <button name="record" class="button" v-else @click="onRecord(false)" :disabled="state === 'processing'"><MicIcon />&nbsp;{{ t('common.record') }}</button>
             <input ref="fileInput" type="file" accept=".mp3,.wav,audio/mp3,audio/wav" @change="onFileSelected" class="file-input" />
-            <button name="upload" class="button" @click="triggerFileUpload" :disabled="state === 'processing'"><BIconUpload />&nbsp;{{ t('transcribe.upload') }} </button>
+            <button name="upload" class="button" @click="triggerFileUpload" :disabled="state === 'processing'"><UploadIcon />&nbsp;{{ t('transcribe.upload') }} </button>
             <div class="dropzone" :class="{ 'drag-over': isDragOver, 'disabled': state === 'processing' }"
             >
-              <BIconSoundwave />&nbsp;{{ t('transcribe.dropzone') }}
+              <AudioWaveformIcon />&nbsp;{{ t('transcribe.dropzone') }}
             </div>
           </div>
         </div>
 
         <div class="visualizer">
-          <BIconRecordCircle v-if="state == 'recording'" class="stop" color="red" @click="onStop()" />
+          <CircleIcon v-if="state == 'recording'" class="stop" color="red" fill="red" @click="onStop()" />
           <Loader class="loader" v-else-if="state === 'processing'" />
-          <BIconRecordCircle v-else class="record" :color="state === 'initializing' ? 'orange' : ''" @click="onRecord(false)" />
+          <CircleIcon v-else class="record" :color="state === 'initializing' ? 'orange' : 'var(--text-color)'" :fill="state === 'initializing' ? 'orange' : 'var(--background-color)'" @click="onRecord(false)" />
           <Waveform :width="500" :height="32" :foreground-color-inactive="foregroundColorInactive" :foreground-color-active="foregroundColorActive" :audio-recorder="audioRecorder" :is-recording="state == 'recording'"/>
         </div>
         
@@ -85,12 +79,12 @@
         
         <div class="actions">
           <div class="form form-large">
-            <button name="summarize" class="button" @click="onSummarize" :disabled="!transcription || state === 'processing'"><BIconChevronBarContract /> {{ t('transcribe.summarize') }}</button>
-            <button name="translate" class="button" @click="onTranslate" :disabled="!transcription || state === 'processing'"><BIconGlobe /></button>
-            <button name="commands" class="button" @click="onCommands" :disabled="!transcription || state === 'processing'"><BIconMagic /></button>
-            <div class="push"></div>
+            <button name="summarize" class="button" @click="onSummarize" :disabled="!transcription || state === 'processing'"><MinimizeIcon /> {{ t('transcribe.summarize') }}</button>
+            <button name="translate" id="translate-btn" class="button" @click="onTranslate" :disabled="!transcription || state === 'processing'"><GlobeIcon /></button>
+            <button name="commands" id="commands-btn" class="button" @click="onCommands" :disabled="!transcription || state === 'processing'"><WandIcon /></button>
+            <div class="flex-push"></div>
             <button name="clear" class="button" @click="onClear" :disabled="!transcription || state === 'processing'">{{ t('common.clear') }}</button>
-            <button name="insert" class="button" @click="onInsert" :disabled="!transcription || state === 'processing'" v-if="!isMas">{{ t('common.insert') }}</button>
+            <button name="insert" class="button" @click="onInsert" :disabled="!transcription || state === 'processing'">{{ t('common.insert') }}</button>
             <button name="copy" class="button" @click="onCopy" :disabled="!transcription || state === 'processing'">{{ copying ? t('common.copied') : t('common.copy') }}</button>
           </div>
         </div>
@@ -104,31 +98,41 @@
       </main>
     </div>
 
-    <ContextMenu v-if="showTranslateMenu" @close="() => showTranslateMenu = false" :actions="translateMenuActions" :show-filter="true" @action-clicked="handleTranslateClick" :x="menuX" :y="menuY" position="above" :teleport="false" />
-    <ContextMenu v-if="showCommandsMenu" @close="() => showCommandsMenu = false" :actions="commandsMenuActions" :show-filter="true" @action-clicked="handleCommandClick" :x="menuX" :y="menuY" position="above" :teleport="false" />
+    <ContextMenuPlus v-if="showTranslateMenu" @close="() => showTranslateMenu = false" :show-filter="true" anchor="#translate-btn" position="above" :teleport="false">
+      <div class="item disabled">{{ t('transcribe.translate') }}</div>
+      <div v-for="lang in allLanguages" :key="lang.label" class="item" @click="handleTranslateClick(lang.label)">
+        {{ lang.label }}
+      </div>
+    </ContextMenuPlus>
+
+    <ContextMenuPlus v-if="showCommandsMenu" @close="() => showCommandsMenu = false" :show-filter="true" anchor="#commands-btn" position="above" :teleport="false">
+      <div v-for="cmd in commandsMenuActions" :key="cmd.action" class="item" @click="handleCommandClick(cmd.action)">
+        <span v-if="typeof cmd.icon === 'string'" class="icon text">{{ cmd.icon }}</span>
+        <component :is="cmd.icon" v-else-if="typeof cmd.icon === 'object'" class="icon" />
+        {{ cmd.label }}
+      </div>
+    </ContextMenuPlus>
 
   </div>
 </template>
 
 <script setup lang="ts">
 
-import { StreamingChunk } from '../voice/stt'
-import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { store } from '../services/store'
-import { commandI18n, t } from '../services/i18n'
-import { getSTTEngines, getSTTModels } from '../voice/stt'
-import { allLanguages } from '../services/i18n'
-import ContextMenu from '../components/ContextMenu.vue'
-import Waveform from '../components/Waveform.vue'
-import Loader from '../components/Loader.vue'
-import useTranscriber from '../composables/transcriber'
-import useAudioRecorder from '../composables/audio_recorder'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import ContextMenuPlus from '../components/ContextMenuPlus.vue'
 import LangSelect from '../components/LangSelect.vue'
+import Loader from '../components/Loader.vue'
+import Waveform from '../components/Waveform.vue'
+import useAudioRecorder from '../composables/audio_recorder'
 import Dialog from '../composables/dialog'
+import useTranscriber from '../composables/transcriber'
 import Attachment from '../models/attachment'
+import { allLanguages, commandI18n, t } from '../services/i18n'
+import { store } from '../services/store'
+import { getSTTEngines, getSTTModels, StreamingChunk } from '../voice/stt'
 
+import { AudioWaveformIcon, CircleIcon, DiscIcon, GlobeIcon, MicIcon, MinimizeIcon, UploadIcon, WandIcon } from 'lucide-vue-next'
 import useEventBus from '../composables/event_bus'
-import { id } from 'vega'
 const { emitEvent } = useEventBus()
 
 // init stuff
@@ -140,7 +144,6 @@ let pushToTalkMode = false
 
 type State = 'idle'|'initializing'|'recording'|'processing'
 
-const isMas = ref(false)
 const engine = ref('')
 const model = ref('')
 const locale = ref('')
@@ -154,8 +157,6 @@ const copying = ref(false)
 const fileInput = ref(null)
 const showTranslateMenu = ref(false)
 const showCommandsMenu = ref(false)
-const menuX = ref(0)
-const menuY = ref(0)
 const isDragOver = ref(false)
 
 let previousTranscription = ''
@@ -163,19 +164,8 @@ let previousTranscription = ''
 const meta = computed(() => window.api.platform === 'darwin' ? 'Cmd' : 'Ctrl')
 
 const models = computed(() => {
-  const models = getSTTModels(engine.value) ?? []
-  if (!models.find(m => m.id === store.config.stt.model)) {
-    models.unshift({ id: store.config.stt.model, label: store.config.stt.model })
-  }
-  return models
+  return getSTTModels(engine.value) ?? []
 })
-
-const translateMenuActions = computed(() => ([
-  { action: '', label: t('transcribe.translate'), disabled: true },
-  ...allLanguages.map(lang => ({
-    action: lang.label, label: lang.label
-  }))
-]))
 
 const commandsMenuActions = computed(() => {
   return store.commands.filter((c) => c.state == 'enabled').map(c => {
@@ -242,7 +232,20 @@ const load = () => {
   transcription.value = store.transcribeState.transcription
   locale.value = store.config.stt.locale || ''
   engine.value = store.config.stt.engine
-  model.value = store.config.stt.model
+  
+  // Validate that the current model is valid for the selected engine
+  const availableModels = getSTTModels(engine.value) ?? []
+  const configModel = store.config.stt.model
+  
+  if (availableModels.find(m => m.id === configModel)) {
+    model.value = configModel
+  } else if (availableModels.length > 0) {
+    // If the stored model is not valid for this engine, use the first available model
+    model.value = availableModels[0].id
+  } else {
+    model.value = ''
+  }
+  
   pushToTalk.value = store.config.stt.pushToTalk
   autoStart.value = store.config.stt.autoStart
 }
@@ -259,7 +262,7 @@ const onChangeModel = async () => {
 const initialize = async () => {
 
   // initialize the transcriber
-  transcriber.initialize()
+  await transcriber.initialize()
   await initializeAudio()
   if (transcriber.engine) {
     console.log('[stt]', transcriber.engine?.name, transcriber.model)
@@ -268,7 +271,6 @@ const initialize = async () => {
   // other stuff
   autoStart.value = store.config.stt.autoStart
   pushToTalk.value = store.config.stt.pushToTalk
-  isMas.value = window.api.isMasBuild
 
 }
 
@@ -316,7 +318,7 @@ const initializeAudio = async () => {
 
         },
 
-        onRecordingComplete: async (audioChunks: Blob[], noiseDetected: boolean) => {
+        onRecordingComplete: async (audioBlob: Blob, noiseDetected: boolean) => {
 
           // if no noise stop everything
           if (!noiseDetected) {
@@ -325,7 +327,7 @@ const initializeAudio = async () => {
           }
 
           // transcribe
-          await transcribe(audioChunks)
+          await transcribe(audioBlob)
 
           // execute?
           if (userStoppedDictation === false/* && store.config.stt.silenceAction === 'execute_continue'*/) {
@@ -435,11 +437,11 @@ const stopDictation = async (userStopped: boolean) => {
   audioRecorder.stop()
 }
 
-const transcribe = async (audioChunks: any[]) => {
+const transcribe = async (audioBlob: Blob) => {
 
   try {
 
-    const response = await transcriber.transcribe(audioChunks)
+    const response = await transcriber.transcribe(audioBlob)
 
     // add a space if needed
     if (transcription.value.length && ',;.?!'.indexOf(transcription.value[transcription.value.length - 1]) !== -1 && response.text[0] !== ' ') {
@@ -643,11 +645,7 @@ const onSummarize = async () => {
   })
 }
 
-const onTranslate = async (ev: MouseEvent) => {
-  const rcButton = (ev.currentTarget as HTMLElement).getBoundingClientRect()
-  const rcContent = (ev.currentTarget as HTMLElement).closest('.split-pane').getBoundingClientRect()
-  menuX.value = rcButton.right + 8
-  menuY.value = rcContent.bottom - rcButton.bottom
+const onTranslate = async () => {
   showTranslateMenu.value = true
 }
 
@@ -662,11 +660,7 @@ const handleTranslateClick = async (action: string) => {
   })
 }
 
-const onCommands = async (ev: MouseEvent) => {
-  const rcButton = (ev.currentTarget as HTMLElement).getBoundingClientRect()
-  const rcContent = (ev.currentTarget as HTMLElement).closest('.split-pane').getBoundingClientRect()
-  menuX.value = rcButton.right + 8
-  menuY.value = rcContent.bottom - rcButton.bottom
+const onCommands = async () => {
   showCommandsMenu.value = true
 }
 
@@ -700,10 +694,7 @@ button {
 .transcribe {
 
   .sp-sidebar {
-    flex-basis: 240px;
-    main {
-      padding: 2rem 1.5rem;
-    }
+    flex: 0 0 var(--large-panel-width);
   }
 
   .sp-main {
@@ -767,7 +758,7 @@ button {
         display: flex;
         flex-direction: row;
         justify-content: flex-start;
-        font-size: 18pt;
+        font-size: 24px;
         gap: 24px;
         align-items: center;
         color: var(--text-color);
@@ -790,7 +781,7 @@ button {
           border: 0.25px solid var(--control-border-color);
           color: var(--text-color);
           border-radius: 6px;
-          font-size: 11.5pt;
+          font-size: 15.5px;
           padding: 8px;
           resize: none;
 
@@ -802,7 +793,24 @@ button {
             text-align: center;
             line-height: 140%;
             font-family: var(--font-family-serif);
-            font-size: 14pt;
+            font-size: 18.5px;
+          }
+        }
+
+        .transcription-display {
+          flex: 1;
+          background-color: var(--control-textarea-bg-color);
+          border: 0.25px solid var(--control-border-color);
+          color: var(--text-color);
+          border-radius: 6px;
+          font-size: 15.5px;
+          padding: 8px;
+          min-height: 200px;
+          overflow-y: auto;
+
+          .final-text {
+            color: var(--text-color);
+            line-height: 1.4;
           }
         }
       }
@@ -817,14 +825,11 @@ button {
           flex-direction: row;
         }
 
-        .push {
-          flex: 1;
-        }
       }
 
       .help {
         margin-top: 0.5rem;
-        font-size: 10pt;
+        font-size: 13.5px;
         text-align: right;
       }
 

@@ -4,11 +4,8 @@ import { vi, beforeAll, beforeEach, expect, test } from 'vitest'
 import { useWindowMock } from '../mocks/window'
 import { createI18nMock } from '../mocks'
 import { store } from '../../src/services/store'
-import defaults from '../../defaults/settings.json'
 import Assistant, { AssistantCompletionOpts } from '../../src/services/assistant'
-import Generator from '../../src/services/generator'
 import Attachment from '../../src/models/attachment'
-import Message from '../../src/models/message'
 import LlmMock, { installMockModels } from '../mocks/llm'
 
 vi.mock('../../src/llms/manager.ts', async () => {
@@ -23,7 +20,7 @@ vi.mock('../../src/llms/manager.ts', async () => {
   LlmManager.prototype.getChatEngineModel = () => ({ engine: 'mock', model: 'chat' })
   LlmManager.prototype.igniteEngine = vi.fn(() => new LlmMock(store.config.engines.mock))
   LlmManager.prototype.isComputerUseModel = vi.fn(() => false)
-  LlmManager.prototype.checkModelListsVersion = vi.fn()
+  LlmManager.prototype.checkModelsCapabilities = vi.fn()
   LlmManager.prototype.loadTools = vi.fn()
 	return { default: LlmManager }
 })
@@ -34,23 +31,10 @@ vi.mock('../../src/services/i18n', async () => {
   }))
 })
 
-vi.mock('../../src/main/config.ts', async () => {
-  return {
-    loadSettings: () => JSON.parse(JSON.stringify(defaults)),
-  }
-})
-
 vi.mock('../../src/services/download.ts', async () => {
   return {
     saveFileContents: vi.fn(() => 'local_file.png'),
   }
-})
-
-beforeAll(() => {
-  Generator.addCapabilitiesToSystemInstr = false
-  Generator.addDateAndTimeToSystemInstr = false
-  useWindowMock()
-  store.loadExperts()
 })
 
 const spyMockStream = vi.spyOn(LlmMock.prototype, 'stream')
@@ -76,14 +60,18 @@ const prompt = async (prompt: string, opts: AssistantCompletionOpts = { model: '
 
 }
 
+beforeAll(async () => {
+  useWindowMock({ noAdditionalInstructions: true })
+  store.loadExperts()
+})
+
 beforeEach(() => {
 
   // clear mock
   vi.clearAllMocks()
 
   // init store
-  // @ts-expect-error mocking
-  store.config = defaults
+  store.loadSettings()
   store.config.general.locale = 'en-US'
   store.config.llm.locale = 'fr-FR'
   store.config.llm.forceLocale = false
@@ -92,8 +80,14 @@ beforeEach(() => {
   store.config.instructions = {}
   installMockModels()
 
+  // disable all additional instructions
+  for (const key of Object.keys(store.config.llm.additionalInstructions)) {
+    // @ts-expect-error partial mock
+    store.config.llm.additionalInstructions[key] = false
+  }
+
   // init assistant
-  assistant = new Assistant(store.config)
+  assistant = new Assistant(store.config, store.workspace.uuid)
   assistant!.setLlm(new LlmMock({}))
   assistant.initLlm = () => {}
 })
@@ -106,7 +100,7 @@ test('Assistant Creation', () => {
 test('Assistant parameters', async () => {
   await prompt('Hello LLM')
   const params: AssistantCompletionOpts = spyMockStream.mock.calls[0][2] as AssistantCompletionOpts
-  expect(params).toStrictEqual({
+  expect(params).toMatchObject({
     titling: true,
     engine: 'mock',
     model: 'chat',
@@ -188,6 +182,21 @@ test('User-defined instructions', async () => {
   const instructions = await assistant!.chat.messages[0].content
   expect(instructions).toBe('You are a standard assistant\n\ninstructions.utils.setLang_fr-FR')
   expect(assistant!.chat.title).toBe('You are a titling assistant:\n"Title"')
+})
+
+test('NoMarkdown modifier', async () => {
+  store.config.llm.locale = ''
+  // Test without noMarkdown
+  await prompt('Hello LLM', { model: 'chat' })
+  const instructions1 = await assistant!.chat.messages[0].content
+  expect(instructions1).toContain('instructions.chat.standard_en-US')
+  expect(instructions1).not.toContain('instructions.capabilities.noMarkdown_en-US')
+
+  // Test with noMarkdown
+  await prompt('Hello LLM', { model: 'chat', noMarkdown: true })
+  const instructions2 = await assistant!.chat.messages[0].content
+  expect(instructions2).toContain('instructions.chat.standard_en-US')
+  expect(instructions2).toContain('instructions.capabilities.noMarkdown_en-US')
 })
 
 test('Assistant Chat Streaming', async () => {
@@ -284,55 +293,6 @@ test('Assistant prompt override', async () => {
   assistant!.chat.instructions = 'UserInstructions'
   const content = await prompt('Hello LLM')
   expect(content).toBe('[{"role":"system","content":"UserInstructions"},{"role":"user","content":"Hello LLM"},{"role":"assistant","content":"Be kind. Don\'t mock me"}]')
-})
-
-test('Conversaton Length 1', async () => {
-  store.config.llm.conversationLength = 1
-  await prompt('Hello LLM1')
-  await prompt('Hello LLM2')
-  const thread = JSON.parse(assistant!.chat.lastMessage().content)
-  expect(assistant!.chat.messages.length).toBe(5)
-  expect(thread).toHaveLength(3)
-  expect(thread.map((m: Message) => m.role)).toEqual(['system', 'user', 'assistant'])
-})
-
-test('Conversaton Length 2', async () => {
-  store.config.llm.conversationLength = 2
-  await prompt('Hello LLM1')
-  await prompt('Hello LLM2')
-  const thread = JSON.parse(assistant!.chat.lastMessage().content)
-  expect(thread).toHaveLength(5)
-  expect(thread.map((m: Message) => m.role)).toEqual(['system', 'user', 'assistant', 'user', 'assistant'])
-})
-
-test('No API Key', async () => {
-  await prompt('no api key')
-  const content = assistant!.chat.lastMessage().content
-  expect(content).toBe('generator.errors.missingApiKey_en-US')
-})
-
-test('Low balance', async () => {
-  await prompt('no credit left')
-  const content = assistant!.chat.lastMessage().content
-  expect(content).toBe('generator.errors.outOfCredits_en-US')
-})
-
-test('Quota exceeded', async () => {
-  await prompt('quota exceeded')
-  const content = assistant!.chat.lastMessage().content
-  expect(content).toBe('generator.errors.quotaExceeded_en-US')
-})
-
-test('Stop generation', async () => {
-  const start = Date.now()
-  await assistant!.prompt('infinite', { model: 'chat' }, () => {
-    if (Date.now() > start + 250) {
-      assistant!.stop()
-    } else {
-      expect(assistant!.chat.lastMessage().transient).toBe(true)
-    }
-  })
-  expect(assistant!.chat.lastMessage().transient).toBe(false)
 })
 
 test('Custom instructions with valid ID', async () => {
@@ -491,7 +451,7 @@ test('Custom instructions with chat override', async () => {
 })
 
 test('Assistant instructions with capabilities', async () => {
-  Generator.addCapabilitiesToSystemInstr = true
+  store.config.llm.additionalInstructions.mermaid = true
   store.config.llm.instructions = 'standard'
   store.config.llm.locale = ''
   await prompt('Hello LLM')

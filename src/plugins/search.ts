@@ -1,11 +1,15 @@
 
-import { anyDict } from 'types/index'
-import { PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
-import Plugin, { PluginConfig } from './plugin'
-import Tavily from '../vendor/tavily'
+import Perplexity from '@perplexity-ai/perplexity_ai'
 import { Exa } from 'exa-js'
 import { convert } from 'html-to-text'
+import { PluginExecutionContext, PluginParameter } from 'multi-llm-ts'
+import { anyDict, LocalSearchResponse } from 'types/index'
 import { t } from '../services/i18n'
+import Tavily from '../vendor/tavily'
+import Plugin, { PluginConfig } from './plugin'
+import { executeIpcWithAbort } from './ipc_abort_helper'
+
+export const kSearchPluginName = 'search_internet'
 
 export type SearchResultItem = {
   title: string
@@ -26,21 +30,26 @@ export type SearchResponse = {
 
 export default class extends Plugin {
 
-  constructor(config: PluginConfig) {
-    super(config)
+  maxResults?: number
+  titlesOnly?: boolean
+
+  constructor(config: PluginConfig, workspaceId: string) {
+    super(config, workspaceId)
+    this.titlesOnly = false
   }
 
   isEnabled(): boolean {
     return this.config?.enabled && (
       (this.config.engine == 'local') ||
-      (this.config.engine == 'tavily' && this.config.tavilyApiKey?.trim().length > 0) ||
       (this.config.engine == 'brave' && this.config.braveApiKey?.trim().length > 0) ||
-      (this.config.engine == 'exa' && this.config.exaApiKey?.trim().length > 0)
+      (this.config.engine == 'exa' && this.config.exaApiKey?.trim().length > 0) ||
+      (this.config.engine == 'perplexity' && this.config.perplexityApiKey?.trim().length > 0) ||
+      (this.config.engine == 'tavily' && this.config.tavilyApiKey?.trim().length > 0)
     )
   }
 
   getName(): string {
-    return 'search_internet'
+    return kSearchPluginName
   }
 
   getDescription(): string {
@@ -56,7 +65,7 @@ export default class extends Plugin {
   }
 
   getCompletedDescription(tool: string, args: any, results: any): string | undefined {
-    if (results.error) {
+    if (!results || !results.results || results.error) {
       return t('plugins.search.error')
     } else {
       return t('plugins.search.completed', { query: args.query, count: results.results.length })
@@ -80,96 +89,100 @@ export default class extends Plugin {
     ]
   }
 
+  setMaxResults(max: number) {
+    this.maxResults = max
+  }
+
+  setTitlesOnly(titlesOnly: boolean) {
+    this.titlesOnly = titlesOnly
+  }
+
   async execute(context: PluginExecutionContext, parameters: anyDict): Promise<SearchResponse> {
 
-    const maxResults = parameters.maxResults || this.config.maxResults || 5
+    const maxResults = this.maxResults ?? (parameters.maxResults || this.config.maxResults || 5)
+    
+    let response: SearchResponse = { error: 'Not implemented' }
     
     if (this.config.engine === 'local') {
-      return this.local(parameters, maxResults)
-    } else if (this.config.engine === 'tavily') {
-      return this.tavily(parameters, maxResults)
+      response = await this.local(context, parameters, maxResults)
     } else if (this.config.engine === 'brave') {
-      return this.brave(parameters, maxResults)
+      response = await this.brave(context, parameters, maxResults)
     } else if (this.config.engine === 'exa') {
-      return this.exa(parameters, maxResults)
+      response = await this.exa(context, parameters, maxResults)
+    } else if (this.config.engine === 'perplexity') {
+      response = await this.perplexity(context, parameters, maxResults)
+    } else if (this.config.engine === 'tavily') {
+      response = await this.tavily(context, parameters, maxResults)
     } else {
-      return { error: 'Invalid engine' }
+      response = { error: 'Invalid engine' }
     }
+
+    // if error nothing to do
+    if (response.error || !response.results) {
+      return response
+    }
+
+    // process content
+    for (const result of response.results) {
+      if (this.titlesOnly) {
+        delete result.content
+      } else {
+        result.content = this.truncateContent(result.content)
+      }
+    }
+
+    // done
+    return response
+
   }
 
-  async local(parameters: anyDict, maxResults: number): Promise<SearchResponse> {
+  async local(context: PluginExecutionContext, parameters: anyDict, maxResults: number): Promise<SearchResponse> {
 
     try {
-      const results = await window.api.search.query(parameters.query, maxResults)
-      const response = {
+      const response: LocalSearchResponse = await executeIpcWithAbort(
+        (signalId) => window.api.search.query(parameters.query, maxResults, signalId),
+        (signalId) => window.api.search.cancel(signalId),
+        context.abortSignal
+      )
+
+      if (response.error || !response.results) {
+        return { error: response.error }
+      }
+      
+      return {
         query: parameters.query,
-        results: results.map(result => ({
+        results: response.results.map(result => ({
           title: result.title,
           url: result.url,
-          content: this.truncateContent(this.htmlToText(result.content))
+          content: this.htmlToText(result.content)
         }))
       }
-      //console.log('Local search response:', response)
-      return response
-    } catch (error) {
-      return { error: error.message }
-    }
-  }
-
-  async tavily(parameters: anyDict, maxResults: number): Promise<SearchResponse> {
-
-    try {
-
-      // tavily
-      const tavily = new Tavily(this.config.tavilyApiKey)
-      const results = await tavily.search(parameters.query, {
-        max_results: maxResults,
-        //include_answer: true,
-        //include_raw_content: true,
-      })
-
-      // content returned by tavily is very short
-      for (const result of results.results) {
-        const html = await fetch(result.url).then(response => response.text())
-        result.content = this.htmlToText(html)
-      }
-
-      // done
-      const response = {
-        query: parameters.query,
-        results: results.results.map(result => ({
-          title: result.title,
-          url: result.url,
-          content: this.truncateContent(result.content)
-        }))
-      }
-      //console.log('Tavily response:', response)
-      return response
 
     } catch (error) {
       return { error: error.message }
     }
   }
 
-  async brave(parameters: anyDict, maxResults: number): Promise<SearchResponse> {
+  async brave(context: PluginExecutionContext, parameters: anyDict, maxResults: number): Promise<SearchResponse> {
 
     try {
 
       const baseUrl = 'https://api.search.brave.com/res/v1/web/search'
-      const response = await fetch(`${baseUrl}?q=${encodeURIComponent(parameters.query)}&count=${maxResults}`, {
-        headers: {
-          'Accept': 'application/json',
-          'X-Subscription-Token': this.config.braveApiKey
-        }
-      })
+      const response = await this.runWithAbort(
+        fetch(`${baseUrl}?q=${encodeURIComponent(parameters.query)}&count=${maxResults}`, {
+          headers: {
+            'Accept': 'application/json',
+            'X-Subscription-Token': this.config.braveApiKey
+          },
+          signal: context.abortSignal
+        }),
+        context.abortSignal
+      )
 
       const data = await response.json()
 
       // content returned by brave is very short
-      for (const result of data.web.results) {
-        const html = await fetch(result.url).then(response => response.text())
-        result.content = this.htmlToText(html)
-      }
+      await this.enrichResultsWithContent(data.web.results, context)
 
       return {
         query: parameters.query,
@@ -185,15 +198,18 @@ export default class extends Plugin {
     }
   }
 
-  async exa(parameters: anyDict, maxResults: number): Promise<SearchResponse> {
+  async exa(context: PluginExecutionContext, parameters: anyDict, maxResults: number): Promise<SearchResponse> {
 
     try {
 
       const exa = new Exa(this.config.exaApiKey)
-      const results = await exa.searchAndContents(parameters.query, {
-        text: true,
-        numResults: maxResults,
-      })
+      const results = await this.runWithAbort(
+        exa.searchAndContents(parameters.query, {
+          text: true,
+          numResults: maxResults,
+        }),
+        context.abortSignal
+      )
 
       return {
         query: parameters.query,
@@ -208,6 +224,75 @@ export default class extends Plugin {
       return { error: error.message }
     }
 
+  }
+
+  async perplexity(context: PluginExecutionContext, parameters: anyDict, maxResults: number): Promise<SearchResponse> {
+
+    try {
+
+      // perplexity
+      const perplexity = new Perplexity({ apiKey: this.config.perplexityApiKey })
+      const results = await this.runWithAbort(
+        perplexity.search.create({
+          query: parameters.query,
+          max_results: maxResults,
+        }),
+        context.abortSignal
+      ) as unknown as SearchResponse
+
+      // no content returned by perplexity
+      await this.enrichResultsWithContent(results.results, context)
+
+      // done
+      const response = {
+        query: parameters.query,
+        results: results.results.map(result => ({
+          title: result.title,
+          url: result.url,
+          content: result.content
+        }))
+      }
+      //console.log('Tavily response:', response)
+      return response
+
+    } catch (error) {
+      return { error: error.message }
+    }
+  }
+
+  async tavily(context: PluginExecutionContext, parameters: anyDict, maxResults: number): Promise<SearchResponse> {
+
+    try {
+
+      // tavily
+      const tavily = new Tavily(this.config.tavilyApiKey)
+      const results = await this.runWithAbort(
+        tavily.search(parameters.query, {
+          max_results: maxResults,
+          //include_answer: true,
+          //include_raw_content: true,
+        }),
+        context.abortSignal
+      )
+
+      // content returned by tavily is very short
+      await this.enrichResultsWithContent(results.results, context)
+
+      // done
+      const response = {
+        query: parameters.query,
+        results: results.results.map(result => ({
+          title: result.title,
+          url: result.url,
+          content: result.content
+        }))
+      }
+      //console.log('Tavily response:', response)
+      return response
+
+    } catch (error) {
+      return { error: error.message }
+    }
   }
 
   htmlToText(html: string): string {
@@ -237,6 +322,27 @@ export default class extends Plugin {
       return content
     } else {
       return content.slice(0, this.config.contentLength)
+    }
+  }
+
+  /**
+   * Fetches HTML content from URLs and converts to text.
+   * Used by search engines that don't return full content.
+   *
+   * @param results - Search results with URLs to fetch
+   * @param context - Plugin execution context with abort signal
+   * @private
+   */
+  private async enrichResultsWithContent(
+    results: SearchResultItem[],
+    context: PluginExecutionContext
+  ): Promise<void> {
+    for (const result of results) {
+      const html = await this.runWithAbort(
+        fetch(result.url, { signal: context.abortSignal }).then(response => response.text()),
+        context.abortSignal
+      )
+      result.content = this.htmlToText(html)
     }
   }
 

@@ -1,7 +1,7 @@
 
 import { LlmModelOpts, PluginParameter } from 'multi-llm-ts'
-import { AgentSource, AgentType, Agent as AgentBase, AgentStep } from '../types/index'
 import { extractPromptInputs, replacePromptInputs } from '../services/prompt'
+import { Agent as AgentBase, AgentSource, AgentStep, AgentType } from '../types/agents'
 
 export default class Agent implements AgentBase {
 
@@ -21,6 +21,7 @@ export default class Agent implements AgentBase {
   parameters: PluginParameter[]
   steps: AgentStep[] = []
   schedule: string|null
+  webhookToken: string|null
   invocationValues: Record<string, string>
 
   constructor() {
@@ -39,6 +40,7 @@ export default class Agent implements AgentBase {
     this.instructions = ''
     this.parameters = []
     this.schedule = null
+    this.webhookToken = null
     this.invocationValues = {}
     this.steps = [{
       tools: [],
@@ -70,6 +72,7 @@ export default class Agent implements AgentBase {
     agent.parameters = obj.parameters ?? []
     agent.steps = obj.steps ?? []
     agent.schedule = obj.schedule ?? null
+    agent.webhookToken = obj.webhookToken ?? null
     agent.invocationValues = obj.invocationValues ?? {}
     agent.getPreparationDescription = preparationDescription
     agent.getRunningDescription = runningDescription
@@ -95,7 +98,29 @@ export default class Agent implements AgentBase {
 
   }
 
-  
+  duplicate(nameSuffix = 'Copy'): Agent {
+    const duplicated = new Agent()
+    duplicated.uuid = crypto.randomUUID()
+    duplicated.source = this.source
+    duplicated.createdAt = Date.now()
+    duplicated.updatedAt = Date.now()
+    duplicated.name = `${this.name} - ${nameSuffix}`
+    duplicated.description = this.description
+    duplicated.type = this.type
+    duplicated.engine = this.engine
+    duplicated.model = this.model
+    duplicated.modelOpts = this.modelOpts ? { ...this.modelOpts } : null
+    duplicated.disableStreaming = this.disableStreaming
+    duplicated.locale = this.locale
+    duplicated.instructions = this.instructions
+    duplicated.parameters = this.parameters ? [...this.parameters] : []
+    duplicated.steps = this.steps ? JSON.parse(JSON.stringify(this.steps)) : []
+    duplicated.schedule = this.schedule
+    duplicated.webhookToken = this.webhookToken
+    duplicated.invocationValues = this.invocationValues ? { ...this.invocationValues } : {}
+    return duplicated
+  }
+
   getPreparationDescription?: () => string
   getRunningDescription?: (args: any) => string
   getCompletedDescription?: (args: any, results: any) => string

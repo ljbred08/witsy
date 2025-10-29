@@ -1,5 +1,6 @@
 <template>
   <div class="studio-settings">
+    <main>
     <div class="form form-vertical">
 
       <div class="form-field media-type">
@@ -24,8 +25,8 @@
         <template v-if="allowModelEntry">
           <ComboBox name="model" :items="models" v-model="model" @change="onChangeModel">
             <button name="favorite" @click.prevent="toggleFavorite">
-              <BIconStarFill v-if="isFavorite"/>
-              <BIconStar v-else/>
+              <StarOffIcon v-if="isFavorite"/>
+              <StarIcon v-else/>
             </button>
           </ComboBox>
           <RefreshButton :on-refresh="getModels" />
@@ -45,20 +46,36 @@
       
       </div>
 
+      <div class="form-field" v-if="canUpload">
+        <label>{{ t('designStudio.inputImage') }}</label>
+        <div class="form-subgroup">
+          <button name="upload" type="button" @click="$emit('upload')" :disabled="isGenerating"><UploadIcon />{{ t('common.upload') }}</button>
+          <button name="draw" type="button" @click="$emit('draw')" :disabled="isGenerating"><LineSquiggleIcon />{{ t('designStudio.draw') }}</button>
+        </div>
+      </div>
+
       <div class="form-field horizontal" v-if="currentMedia != null && canTransform">
-        <input type="checkbox" v-model="transform" name="transform" @change="onChangeTransform"/>
-        <label>{{ t('designStudio.transform') }}</label>
+        <input type="checkbox" id="studio-transform" v-model="transform" name="transform" @change="onChangeTransform"/>
+        <label for="studio-transform">{{ t('designStudio.transform') }}</label>
       </div>
 
       <div class="form-field horizontal" v-if="isEditing && !isGenerating">
-        <input type="checkbox" v-model="preserve" name="preserve" />
-        <label>{{ t('designStudio.preserveOriginal') }}</label>
+        <input type="checkbox" id="studio-preserve" v-model="preserve" name="preserve" />
+        <label for="studio-preserve">{{ t('designStudio.preserveOriginal') }}</label>
       </div>
 
       <div class="form-field">
-        <label>{{ t('common.prompt') }}<BIconMagic v-if="promptLibrary.length" @click="onShowPromptLibrary"/></label>
+        <label>{{ t('common.prompt') }}<WandIcon v-if="promptLibrary.length" @click="onShowPromptLibrary"/></label>
         <textarea v-model="prompt" name="prompt" class="prompt" :placeholder="t('designStudio.promptPlaceholder')">
         </textarea>
+        <div class="attachments" v-if="attachments.length">
+          <div v-for="attachment in attachments" :key="attachment.url" class="attachment">
+            <AttachmentView :attachment="attachment" />
+            <div class="title" v-if="!attachment.isImage()">{{ attachment.filenameShort }}</div>
+            <XIcon class="delete" @click="onDetach(attachment)" />
+          </div>
+        </div>
+        <button v-if="canAttach" name="attach" type="button" @click="onAttach" :disabled="isGenerating"><PaperclipIcon />{{ t('common.attach') }}</button>
       </div>
 
       <div v-if="modelHasParams" class="form-field">
@@ -116,45 +133,52 @@
 
       </template>
 
-      <div class="form-field">
-        <div class="form-subgroup">
-          <button name="generate" class="generate-button" type="button" @click="generateMedia()" :disabled="isGenerating">
-            {{ isGenerating ? t('designStudio.generating') : isEditing ? t('common.edit') : t('designStudio.generate') }}
-          </button>
-          <button v-if="canUpload" name="upload" type="button" @click="$emit('upload')" :disabled="isGenerating">{{ t('common.upload') }}</button>
-        </div>
-      </div>
     </div>
+    </main>
+    
+    <footer>
+      <button name="generate" class="cta" type="button" @click="generateMedia()" :disabled="isGenerating">
+        <BrushIcon />
+        {{ isGenerating ? t('designStudio.generating') : isEditing ? t('common.edit') : t('designStudio.generate') }}
+      </button>
+    </footer>
 
     <VariableEditor ref="editor" id="studio-variable-editor" title="designStudio.variableEditor.title" :variable="selectedParam" @save="onSaveParam" />
 
-    <ContextMenu v-if="showPromptLibrary" :actions="promptLibrary" :x="menuX" :y="menuY" @action-clicked="onRunPromptLibrary" @close="showPromptLibrary = false"/>
+    <ContextMenuPlus v-if="showPromptLibrary" :mouseX="menuX" :mouseY="menuY" @close="showPromptLibrary = false">
+      <div v-for="item in promptLibrary" :key="item.action" class="item" @click="onRunPromptLibrary(item.action)">
+        {{ item.label }}
+      </div>
+    </ContextMenuPlus>
 
   </div>
 </template>
 
 <script setup lang="ts">
 
-import { MediaCreator, DesignStudioMediaType } from '../types/index'
-import { onMounted, ref, computed, watch } from 'vue'
-import { t } from '../services/i18n'
-import { store, kReferenceParamValue } from '../services/store'
-import Message from '../models/message'
-import Dialog from '../composables/dialog'
-import RefreshButton from '../components/RefreshButton.vue'
-import VariableEditor from '../screens/VariableEditor.vue'
+import { BrushIcon, LineSquiggleIcon, PaperclipIcon, StarIcon, StarOffIcon, UploadIcon, WandIcon, XIcon } from 'lucide-vue-next'
+import { Model } from 'multi-llm-ts'
+import { computed, onMounted, ref, watch } from 'vue'
+import AttachmentView from '../components/Attachment.vue'
 import ComboBox from '../components/Combobox.vue'
-import ImageCreator from '../services/image'
-import VideoCreator from '../services/video'
-import ContextMenu, { MenuAction } from '../components/ContextMenu.vue'
+import ContextMenuPlus from '../components/ContextMenuPlus.vue'
+import RefreshButton from '../components/RefreshButton.vue'
 import VariableTable from '../components/VariableTable.vue'
-import { baseURL as SDWebUIBaseURL } from '../services/sdwebui'
+import Dialog from '../composables/dialog'
+import useEventBus from '../composables/event_bus'
+import Attachment from '../models/attachment'
+import Message from '../models/message'
+import VariableEditor from '../screens/VariableEditor.vue'
+import { t } from '../services/i18n'
+import ImageCreator from '../services/image'
 import ModelLoaderFactory from '../services/model_loader'
+import { baseURL as SDWebUIBaseURL } from '../services/sdwebui'
+import { kReferenceParamValue, store } from '../services/store'
+import VideoCreator from '../services/video'
+import { FileContents } from '../types/file'
+import { DesignStudioMediaType, MediaCreator } from '../types/index'
 import promptsLibrary from './prompts.json'
 
-import useEventBus from '../composables/event_bus'
-import { Model } from 'multi-llm-ts'
-import { BIconMagic } from 'bootstrap-icons-vue'
 const { onEvent } = useEventBus()
 
 type Parameter = {
@@ -175,13 +199,14 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['upload', 'generate'])
+const emit = defineEmits(['upload', 'generate', 'draw'])
 
 const editor = ref(null)
 const mediaType= ref<DesignStudioMediaType>('image')
 const engine = ref('')
 const model = ref('')
 const prompt = ref('')
+const attachments = ref<Attachment[]>([])
 const params = ref<Record<string, string>>({})
 const transform = ref(false)
 const preserve = ref(false)
@@ -271,6 +296,10 @@ const canEdit = computed(() => {
   return (engine.value === 'openai' && !model.value.includes('dall-e'))
 })
 
+const canAttach = computed(() => {
+  return engine.value === 'google' && model.value.includes('-image')
+})
+
 const modelHasDefaults = computed(() => {
   return store.config.studio.defaults?.find((d) => d.engine === engine.value && d.model === model.value)
 })
@@ -283,6 +312,20 @@ const canSaveAsDefaults = computed(() => {
   }
   return false
 })
+
+const onAttach = () => {
+  let file = window.api.file.pickFile({ filters: [
+    { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif'] }
+  ] })
+  if (file) {
+    const fileContents = file as FileContents
+    attachments.value.push(new Attachment(fileContents.contents, fileContents.mimeType, fileContents.url))
+  }
+}
+
+const onDetach = (attachment: Attachment) => {
+  attachments.value = attachments.value.filter((a: Attachment) => a !== attachment)
+}
 
 const customParams = computed((): Parameter[] => {
 
@@ -389,11 +432,16 @@ const modelHasParams = computed(() => {
 const canTransform = computed(() => {
   return ['falai', 'replicate'].includes(engine.value) ||
     //(engine.value === 'google' && mediaType.value === 'image' && !props.currentMedia?.isVideo()) ||
-    (engine.value === 'openai' && model.value.startsWith('gpt-image-') && mediaType.value === 'image' && !props.currentMedia?.isVideo())
+    (engine.value === 'openai' && model.value.startsWith('gpt-image-') && mediaType.value === 'image' && !props.currentMedia?.isVideo()) ||
+    (engine.value === 'google' && model.value.includes('-image') && mediaType.value === 'image' && !props.currentMedia?.isVideo())
 })
 
 const canUpload = computed(() => {
   return canEdit.value || canTransform.value
+})
+
+const canDraw = computed(() => {
+  return mediaType.value === 'image'
 })
 
 const isEditing = computed(() => {
@@ -461,7 +509,18 @@ const onChangeEngine = () => {
 }
 
 const onChangeTransform = () => {
-  model.value = store.config.engines?.[engine.value]?.model?.[modelType.value] || models.value[0]?.id
+
+  // if current model is valid then all good
+  if (model.value && models.value.find((m) => m.id === model.value)) {
+    // model is valid
+  } else {
+    const configModel = store.config.engines?.[engine.value]?.model?.[modelType.value]
+    if (configModel && models.value.find((m) => m.id === configModel)) {
+      model.value = configModel
+    } else {
+      model.value = models.value[0]?.id
+    }
+  }
   onChangeModel()
 }
 
@@ -503,7 +562,7 @@ const onShowPromptLibrary = (event: MouseEvent) => {
 
 const onRunPromptLibrary = (action: string) => {
   showPromptLibrary.value = false
-  const libraryPrompt = promptLibrary.value.find((a: MenuAction) => a.action === action)
+  const libraryPrompt = promptLibrary.value.find((a: any) => a.action === action)
   if (libraryPrompt) prompt.value = libraryPrompt.prompt
 }
 
@@ -616,11 +675,16 @@ const generateMedia = async () => {
     engine: engine.value,
     model: model.value,
     prompt: userPrompt,
+    attachments: attachments.value,
     params: params.value
   })
 }
 
 defineExpose({
+  reset: () => {
+    attachments.value = []
+    transform.value = false
+  },
   loadSettings,
   generateMedia,
   setTransform: (value: boolean) => {
@@ -634,12 +698,28 @@ defineExpose({
 <style scoped>
 
 .studio-settings {
-  overflow-y: auto;
-  padding-bottom: 2rem;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+
+  main {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+    padding-right: 1rem;
+  }
+
+  footer {
+    flex-shrink: 0;
+  }
 }
 
-.studio-settings > * {
-  padding: 0px 1.5rem;
+.split-pane .sp-sidebar {
+  main, footer {
+    padding: 0rem;
+  }
 }
 
 .studio-settings .form .form-field label:has(svg) {
@@ -692,6 +772,51 @@ defineExpose({
 
 .studio-settings .error {
   color: red;
+}
+
+.studio-settings .attachments {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  gap: 0.5rem;
+
+  .attachment {
+    
+    padding: 0.5rem 0.25rem;
+    border: 1px solid var(--prompt-input-border-color);
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+
+    &:has(img) {
+      padding: 0.125rem 0.25rem;
+    }
+
+    .icon {
+      height: 1.25rem !important;
+      width: 1.25rem !important;
+    }
+
+    img {
+      height: 2rem !important;
+      width: 2rem !important;
+      border-radius: 0.125rem;
+      object-fit: cover;
+    }
+
+    .title {
+      font-size: 0.9rem;
+      opacity: 0.8;
+    }
+
+    .delete {
+      padding-left: 0.25rem;
+      cursor: pointer;
+    }
+
+  }
 }
 
 </style>

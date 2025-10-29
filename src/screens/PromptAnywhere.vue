@@ -2,30 +2,28 @@
   <div class="anywhere" @mousedown="onMouseDown" @mouseup="onMouseUp">
     <div class="container" :style="{ top: `calc(${containerTop}px + var(--padding-top))`, left: `${containerLeft}px`, width: `${containerWidth}px` }" >
       <ResizableHorizontal :min-width="500" :resize-elems="false" @resize="onPromptResize">
-        <Prompt 
+        
+        <Prompt
           ref="prompt" 
           :chat="chat" 
           :history-provider="historyProvider" 
           :placeholder="t('common.askMeAnything')" 
-          menus-position="below" 
           :enable-doc-repo="false" 
           :enable-attachments="true" 
           :enable-experts="true" 
           :enable-commands="true" 
           :enable-conversations="false"
+          menus-position="below" 
           @mousedown.stop="onMouseDownPrompt"
+          @set-engine-model="onUpdateEngineModel"
+          @tools-updated="onToolsUpdated"
           @prompt="onSendPrompt"
           @stop="onStopGeneration"
         >
-          <template #after>
+          <template #before>
             <div class="app" v-if="sourceApp">
               <img class="icon" :src="iconData" /> {{ t('common.workingWith') }} {{ sourceApp.name }}
             </div>
-          </template>
-          <template #actions>
-            <div class="info" v-if="chat"><span @click="onEngineModel">
-              <BIconGlobe /> {{ llmManager.getEngineName(chat.engine) }} / {{ chat.model }}
-            </span></div>
           </template>
         </Prompt>
       </ResizableHorizontal>
@@ -35,25 +33,24 @@
       </ResizableHorizontal>
     </div>
   </div>
-  <EngineModelPicker ref="engineModelPicker" :engine="chat.engine" :model="chat.model" :disable-streaming="store.config.prompt.disableStreaming" :disable-tools="store.config.prompt.disableTools" @save="onUpdateEngineModel" v-if="chat"/>
 </template>
 
 <script setup lang="ts">
-import { expertI18n, i18nInstructions, t } from '../services/i18n'
-import { anyDict, ExternalApp } from '../types'
-import { ref, computed, onMounted, onUnmounted, provide } from 'vue'
-import { store } from '../services/store'
-import { availablePlugins } from '../plugins/plugins'
 import { LlmEngine } from 'multi-llm-ts'
-import { SendPromptParams } from '../components/Prompt.vue'
-import ResizableHorizontal from '../components/ResizableHorizontal.vue'
-import EngineModelPicker from '../screens/EngineModelPicker.vue'
-import LlmFactory, { ILlmManager } from '../llms/llm'
-import Prompt from '../components/Prompt.vue'
+import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
 import OutputPanel from '../components/OutputPanel.vue'
-import Generator from '../services/generator'
-import Message from '../models/message'
+import Prompt, { SendPromptParams } from '../components/Prompt.vue'
+import ResizableHorizontal from '../components/ResizableHorizontal.vue'
+import LlmFactory, { ILlmManager } from '../llms/llm'
 import Chat from '../models/chat'
+import Message from '../models/message'
+import { availablePlugins } from '../plugins/plugins'
+import Generator from '../services/generator'
+import { fullExpertI18n, i18nInstructions, t } from '../services/i18n'
+import { store } from '../services/store'
+import { anyDict, ExternalApp } from '../types'
+import { ToolSelection } from '../types/llm'
+import LlmUtils from '../services/llm_utils'
 
 const promptChatTimeout = 1000 * 60 * 5
 
@@ -63,12 +60,12 @@ store.load()
 // init stuff
 const generator = new Generator(store.config)
 const llmManager: ILlmManager = LlmFactory.manager(store.config)
+let abortController: AbortController | null = null
 
 const prompt = ref<typeof Prompt>(null)
-const engineModelPicker = ref<typeof EngineModelPicker>(null)
 const sourceApp = ref<ExternalApp | null>(null)
 const output = ref(null)
-const chat = ref<Chat>(new Chat())
+const chat = ref<Chat>(null)
 const response = ref<Message>(null)
 const showReplace = ref(false)
 
@@ -106,6 +103,9 @@ provide('showReasoning', ref(false))
 provide('onToggleReasoning', () => {})
 
 onMounted(() => {
+
+  // init chat
+  initChat()
   
   // shortcuts work better at document level
   document.addEventListener('keyup', onKeyUp)
@@ -140,7 +140,7 @@ const onDictate = () => {
 const processQueryParams = (params?: anyDict) => {
 
   // log
-  console.log('Processing query params', JSON.stringify(params))
+  console.log('[anywr] Processing query params', JSON.stringify(params))
   showParams = params
 
   // reset stuff
@@ -158,11 +158,11 @@ const processQueryParams = (params?: anyDict) => {
   if (params?.promptId) {
     userPrompt = window.api.automation.getText(params.promptId)
     if (userPrompt?.length) {
-      console.log(`Triggered with prompt: ${userPrompt.replaceAll('\n', '').substring(0, 50)}...`)
+      console.log(`[anywr] Triggered with prompt: ${userPrompt.replaceAll('\n', '').substring(0, 50)}...`)
       userEngine = params.engine
       userModel = params.model
     } else {
-      console.error(`Prompt with id ${params.promptId} not found`)
+      console.error(`[anywr] Prompt with id ${params.promptId} not found`)
     }
   }
 
@@ -269,6 +269,7 @@ const initChat = () => {
   chat.value = new Chat()
   chat.value.title = null
   chat.value.disableStreaming = store.config.prompt.disableStreaming
+  chat.value.tools = store.config.prompt.tools
 
   // reset stuff
   response.value = null
@@ -276,12 +277,11 @@ const initChat = () => {
 
 }
 
-const initLlm = (engine?: string, model?: string, disableTools?: boolean) => {
+const initLlm = (engine?: string, model?: string) => {
 
   // get engine and model
   engine = engine || store.config.prompt.engine
   model = model || store.config.prompt.model
-  disableTools = disableTools || store.config.prompt.disableTools
   if (!engine.length || !model.length) {
     ({ engine, model } = llmManager.getChatEngineModel(false))
   }
@@ -289,24 +289,18 @@ const initLlm = (engine?: string, model?: string, disableTools?: boolean) => {
   // set engine model
   chat.value.setEngineModel(engine, model)
   store.initChatWithDefaults(chat.value)
+  chat.value.disableStreaming = store.config.prompt.disableStreaming
+  chat.value.tools = store.config.prompt.tools
 
   // log
-  console.log(`initialize prompt window llm: ${engine} ${model} ${disableTools ? 'without tools' : 'with tools'}`)
-  
+  console.log(`[anywr] Initialize prompt window llm: ${engine} ${model}`)
+
   // init llm
   llm = llmManager.igniteEngine(engine)
 
-  // tools
-  llmManager.loadTools(llm, availablePlugins, disableTools ? [] : null)
-
 }
 
-const onEngineModel = () => {
-  engineModelPicker.value.show()
-}
-
-const onUpdateEngineModel = (payload: { engine: string, model: string, disableStreaming: boolean, disableTools: boolean }) => {
-  const { engine, model, disableStreaming, disableTools } = payload
+const onUpdateEngineModel = (engine: string, model: string) => {
   if (store.config.prompt.engine === '' && store.config.prompt.model === '') {
     store.config.llm.engine = engine
     store.config.engines[engine].model.chat = model
@@ -314,13 +308,13 @@ const onUpdateEngineModel = (payload: { engine: string, model: string, disableSt
     store.config.prompt.engine = engine
     store.config.prompt.model = model
   }
-  store.config.prompt.disableStreaming = disableStreaming
-  store.config.prompt.disableTools = disableTools
   store.saveSettings()
-  initLlm(engine, model, disableTools)
-  if (chat.value) {
-    chat.value.disableStreaming = store.config.prompt.disableStreaming
-  }
+  initLlm(engine, model)
+}
+
+const onToolsUpdated = (tools: ToolSelection) => {
+  store.config.prompt.tools = tools
+  store.saveSettings()
 }
 
 const onKeyDown = (ev: KeyboardEvent) => {
@@ -416,7 +410,7 @@ const onClose = () => {
 }
 
 const onStopGeneration = () => {
-  generator.stop()
+  abortController?.abort()
 }
 
 const onSendPrompt = async (params: SendPromptParams) => {
@@ -436,8 +430,12 @@ const onSendPrompt = async (params: SendPromptParams) => {
       initLlm()
     }
 
+    // load tools as configured per prompt
+    llmManager.loadTools(llm, store.config.workspaceId, availablePlugins, chat.value.tools)
+
     // system instructions
-    const systemInstructions = generator.getSystemInstructions(instructions)
+    const llmUtils = new LlmUtils(store.config)
+    const systemInstructions = llmUtils.getSystemInstructions(instructions)
     if (chat.value.messages.length === 0) {
       chat.value.addMessage(new Message('system', systemInstructions))
     } else if (instructions) {
@@ -454,7 +452,7 @@ const onSendPrompt = async (params: SendPromptParams) => {
 
     // update thread
     const userMessage = new Message('user', finalPrompt)
-    userMessage.setExpert(expert, expertI18n(expert, 'prompt'))
+    userMessage.setExpert(fullExpertI18n(expert))
     for (const attachment of attachments ?? []) {
       attachment.loadContents()
       userMessage.attach(attachment)
@@ -465,6 +463,9 @@ const onSendPrompt = async (params: SendPromptParams) => {
     response.value = new Message('assistant')
     chat.value.addMessage(response.value)
 
+    // create abort controller
+    abortController = new AbortController()
+
     // now generate
     await generator.generate(llm, chat.value.messages, {
       ...chat.value.modelOpts,
@@ -472,6 +473,7 @@ const onSendPrompt = async (params: SendPromptParams) => {
       streaming: !chat.value.disableStreaming,
       docrepo: docrepo,
       sources: true,
+      abortSignal: abortController.signal,
     })
 
     // save?
@@ -639,8 +641,8 @@ const onResponseResize = (deltaX: number) => {
       align-items: center;
       padding: 2px 8px;
       margin-bottom: 8px;
-      font-size: 11pt;
-      font-weight: 500;
+      font-size: 14.5px;
+      font-weight: var(--font-weight-medium);
       .icon {
         padding: 0px;
         margin: 0px;
@@ -665,7 +667,7 @@ const onResponseResize = (deltaX: number) => {
           max-height: 100px;
           background-color: var(--anywhere-bg-color);
           padding: 6px 16px 6px 8px;
-          font-size: 16pt;
+          font-size: 22px;
           &::placeholder {
             opacity: 0.5;
           }
@@ -674,7 +676,7 @@ const onResponseResize = (deltaX: number) => {
         .icon.left {
           margin: 4px 0px 0px 8px !important;
           svg {
-            font-size: 14pt;
+            font-size: 18.5px;
             height: auto;
           }
         }
@@ -688,10 +690,6 @@ const onResponseResize = (deltaX: number) => {
       padding: 0 0 0.5rem 0.5rem;
       margin-top: 0.25rem;
       
-      .icon {
-        margin-right: 0.5rem;
-      }
-
       .icon.instructions {
         margin-top: 4.5px;
         margin-right: 8px;
@@ -703,12 +701,12 @@ const onResponseResize = (deltaX: number) => {
         color: var(--prompt-icon-color);
         cursor: pointer;
         opacity: 0.5;
-        font-size: 10pt;
+        font-size: 13.5px;
         margin-left: auto;
         svg {
           position: relative;
           top: 1px;
-          font-size: 10pt;
+          font-size: 13.5px;
           margin-right: 0.5rem;
         }
       }
@@ -716,14 +714,9 @@ const onResponseResize = (deltaX: number) => {
 
     .icon {
       cursor: pointer;
-      margin-top: 4px;
       color: var(--prompt-icon-color);
-      font-size: 14pt;
     }
 
-    .icon.send, .icon.stop {
-      display: none;
-    }
   }
 
   .response {

@@ -1,13 +1,13 @@
 
 import { vi, beforeAll, beforeEach, afterAll, expect, test, Mock } from 'vitest'
 import { mount, VueWrapper, enableAutoUnmount } from '@vue/test-utils'
-import { createDialogMock, createI18nMock } from '../mocks'
+import { createI18nMock } from '../mocks'
 import { useWindowMock } from '../mocks/window'
 import { stubTeleport } from '../mocks/stubs'
 import { store } from '../../src/services/store'
 import { switchToTab, tabs } from './settings_utils'
 import Settings from '../../src/screens/Settings.vue'
-import { findModelSelectoPlus } from '../utils'
+import { findModelSelectorPlus } from '../utils'
 import { ChatModel } from 'multi-llm-ts'
 import Dialog from '../../src/composables/dialog'
 
@@ -15,10 +15,6 @@ enableAutoUnmount(afterAll)
 
 HTMLDialogElement.prototype.showModal = vi.fn()
 HTMLDialogElement.prototype.close = vi.fn()
-
-vi.mock('../../src/composables/dialog', async () => {
-  return createDialogMock()
-})
 
 vi.mock('../../src/services/i18n', async () => {
   return createI18nMock()
@@ -144,7 +140,7 @@ test('Edit user command', async () => {
   await editor.find('[name=label]').setValue('')
   await editor.find('[name=template]').setValue('{input2')
   await editor.find('[name=engine]').setValue('openai')
-  await findModelSelectoPlus(editor).setValue('chat2')
+  await findModelSelectorPlus(editor).setValue('chat2')
   await editor.find('[name=icon]').setValue('😀')
   await editor.find('[name=shortcut]').setValue('S')
   await editor.find('button.default').trigger('click')
@@ -256,7 +252,7 @@ test('Context Menu', async () => {
 
   const tab = await switchToTab(wrapper, commandsIndex)
   expect(tab.findAll('.context-menu')).toHaveLength(0)
-  await tab.find('.list-actions .list-action.menu').trigger('click')
+  await tab.find('.list-actions .list-action.menu .trigger').trigger('click')
   await tab.vm.$nextTick()
   expect(tab.findAll('.context-menu')).toHaveLength(1)
 

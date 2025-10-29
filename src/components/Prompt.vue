@@ -5,89 +5,213 @@
       <div class="attachment" v-for="(attachment, index) in attachments" :key="index">
         <AttachmentView :attachment="attachment" />
         <div class="title" v-if="!attachment.isImage()">{{ attachment.filenameShort }}</div>
-        <BIconXLg class="delete" @click="onDetach(attachment)" />
+        <XIcon class="delete" @click="onDetach(attachment)" />
       </div>
     </div>
     <div class="input" @paste="onPaste">
       <div class="textarea-wrapper">
         <div class="icon left processing loader-wrapper" v-if="isProcessing"><Loader /><Loader /><Loader /></div>
-        <div v-if="expert" class="icon left expert" @click="onClickActiveExpert"><BIconMortarboard /></div>
-        <div v-if="command" class="icon left command" @click="onClickActiveCommand"><BIconCommand /></div>
+        <div v-if="command" class="icon left command" @click="onClickActiveCommand"><CommandIcon /></div>
         <textarea v-model="prompt" :placeholder="placeholder" @keydown="onKeyDown" @keyup="onKeyUp" ref="input" autofocus="true" :disabled="conversationMode?.length > 0" />
-        <BIconMagic class="icon command right" @click="onCommands(true)" v-if="enableCommands && prompt" />
-        <BIconStopCircleFill class="icon stop" @click="onStopPrompting" v-if="isPrompting" />
-        <BIconSendFill class="icon send" @click="onSendPrompt" v-else />
       </div>
     </div>
     <div class="actions">
-    <BIconTerminal v-if="enableInstructions"
-        v-tooltip="{ text: t('prompt.instructions.title'), position: 'top-right' }"
-        :class="{ icon: true, instructions: true }" 
-        @click="onClickInstructions" 
+      
+      <ButtonIcon class="prompt-menu" :id="`prompt-menu-${uniqueId}`" @click="onPromptMenu" ref="promptMenuAnchor">
+        <PlusIcon class="icon" />
+      </ButtonIcon>
+      
+      <PromptFeature
+        v-if="instructions"
+        :icon="FeatherIcon"
+        :label="instructions.label"
+        @clear="clearInstructions"
       />
-      <BIconDatabase v-if="enableDocRepo"
-        v-tooltip="{ text: t('prompt.docRepos.tooltip'), position: 'top-right' }"
-        :class="{ icon: true, docrepo: true, active: docRepoActive }" 
-        @click="onDocRepo" 
+      
+      <PromptFeature
+        v-if="expert"
+        :icon="BrainIcon"
+        :label="expert.name || expertI18n(expert, 'name')"
+        @clear="clearExpert"
       />
-      <BIconMortarboard v-if="enableExperts"
-        v-tooltip="{ text: t('prompt.experts.tooltip'), position: 'top' }"
-        class="icon experts" 
-        @click="onClickExperts" 
+      
+      <PromptFeature
+        v-if="docrepo"
+        :icon="LightbulbIcon"
+        :label="getActiveDocRepoName()"
+        @clear="clearDocRepo"
       />
-      <BIconPaperclip v-if="enableAttachments"
-        v-tooltip="{ text: t('prompt.attachment.tooltip'), position: 'top' }"
-        class="icon attach" 
-        @click="onAttach" 
+      
+      <PromptFeature
+        v-if="deepResearchActive"
+        :icon="TelescopeIcon"
+        :label="t('common.deepResearch') || 'Deep Research'"
+        @clear="clearDeepResearch"
       />
-      <BIconMic v-if="hasDictation"
-        v-tooltip="{ text: t('prompt.conversation.tooltip'), position: 'top' }"
-        :class="{ icon: true, dictate: true, active: dictating }" 
-        @click="onDictate" 
-        @contextmenu="onConversationMenu" 
-      />
-      <Waveform v-if="enableWaveform && dictating" :width="64" :height="16" foreground-color-inactive="var(--background-color)" foreground-color-active="red" :audio-recorder="audioRecorder" :is-recording="true"/>
-      <BIconBinoculars v-if="enableDeepResearch"
-        v-tooltip="{ text: t('common.deepResearch'), position: 'top' }"
-        class="icon research" :class="{ active: deepResearchActive }"
-        @click="onDeepResearch"
-      />
+
+      <div class="flex-push"></div>
+      
       <slot name="actions" />
+      
+      <ButtonIcon :id="`commands-menu-${uniqueId}`" @click="onCommands()" v-if="enableCommands && prompt && store.isFeatureEnabled('chat.commands')">
+        <CommandIcon class="icon command" />
+      </ButtonIcon>
+      
+      <Waveform v-if="enableWaveform && dictating" :width="64" :height="16" foreground-color-inactive="var(--background-color)" foreground-color-active="red" :audio-recorder="audioRecorder" :is-recording="true"/>
+      
+      <ButtonIcon :id="`dictate-${uniqueId}`" @click="onDictate" @contextmenu="onConversationMenu" v-if="hasDictation">
+        <MicIcon
+          v-tooltip="{ text: t('prompt.conversation.tooltip'), position: 'top' }"
+          :class="{ icon: true, dictate: true, active: dictating }"
+        />
+      </ButtonIcon>
+      
+      <div class="model-menu-button" :id="`model-menu-button-${uniqueId}`" @click="onModelMenu">
+        <BoxIcon />
+        <div class="model-name">{{ modelName }}</div>
+        <ChevronDownIcon class="icon caret" />
+      </div>
+
+      <template v-if="store.isFeatureEnabled('favorites') && chat">
+
+        <ButtonIcon name="addToFavorites" v-if="!isFavoriteModel" @click="addToFavorites" v-tooltip="{ text: t('common.favorites.add'), position: 'top' }">
+          <HeartPlusIcon class="icon add-favorite" />
+        </ButtonIcon>
+
+        <ButtonIcon name="removeFavorite" v-else @click="removeFavorite" v-tooltip="{ text: t('common.favorites.remove'), position: 'top' }">
+          <HeartMinusIcon class="icon remove-favorite" />
+        </ButtonIcon>
+
+      </template>
+
+      <ButtonIcon class="send-stop" @click="promptingState !== 'idle' ? onStopPrompting() : onSendPrompt()">
+        <XIcon class="icon stop" :class="{ canceling: promptingState === 'canceling' }" v-if="promptingState !== 'idle'" />
+        <ArrowUpIcon class="icon send" :class="{ disabled: !prompt.length }" v-else />
+      </ButtonIcon>
+
     </div>
+    
     <slot name="between" />
     <slot name="after" />
-    <ContextMenu v-if="showInstructions" @close="closeContextMenu" :actions="instructionsMenuItems" @action-clicked="setInstructions" :selected="chatInstructions" :x="menuX" :y="menuY" :position="menusPosition" />
-    <ContextMenu v-if="showDocRepo" @close="closeContextMenu" :actions="docReposMenuItems" @action-clicked="handleDocRepoClick" :x="menuX" :y="menuY" :position="menusPosition" />
-    <ContextMenu v-if="showExperts" @close="closeContextMenu" :show-filter="true" :actions="expertsMenuItems" :selected="expertsMenuItems[0]" @action-clicked="handleExpertClick" :x="menuX" :y="menuY" :position="menusPosition" />
-    <ContextMenu v-if="showActiveExpert" @close="closeContextMenu" :actions="activeExpertMenuItems" @action-clicked="handleExpertClick" :x="menuX" :y="menuY" :position="menusPosition" />
-    <ContextMenu v-if="showCommands" @close="closeContextMenu" :show-filter="true" :actions="commands" @action-clicked="handleCommandClick" :x="menuX" :y="menuY" :position="menusPosition" />
-    <ContextMenu v-if="showConversationMenu" @close="closeContextMenu" :actions="conversationMenu" @action-clicked="handleConversationClick" :x="menuX" :y="menuY" :position="menusPosition" />
+
+    <ContextMenuPlus v-if="showExperts" @close="closeContextMenu" :show-filter="true" anchor=".prompt .textarea-wrapper" :position="menusPosition">
+
+      <!-- Categories with experts -->
+      <div v-for="cat in categoriesWithExperts" :key="cat.id" class="item" :data-submenu-slot="`category-${cat.id}`">
+        <FolderIcon class="icon" />
+        <span>{{ cat.name }}</span>
+      </div>
+
+      <!-- Uncategorized experts -->
+      <template v-if="uncategorizedExperts.length">
+        <div v-for="exp in uncategorizedExperts" :key="exp.id" @click="handleExpertClick(exp.id)">
+          <BrainIcon class="icon" />
+          <span>{{ exp.name }}</span>
+        </div>
+      </template>
+
+      <!-- Category submenus -->
+      <template v-for="cat in categoriesWithExperts" :key="`submenu-${cat.id}`" #[`category-${cat.id}`]>
+        <div v-for="exp in expertsByCategory[cat.id]" :key="exp.id" class="item" @click="handleExpertClick(exp.id)">
+          <BrainIcon class="icon" />
+          {{ exp.name }}
+        </div>
+      </template>
+
+      <!-- <div class="separator" />
+      <div class="item" @click="handleExpertClick('none')">
+        <XIcon class="icon" />
+        {{ t('prompt.menu.experts.none') }}
+      </div> -->
+
+    </ContextMenuPlus>
+
+    <ContextMenuPlus v-if="showCommands" @close="closeContextMenu" :show-filter="true" :anchor="commandsAnchor" :position="menusPosition">
+      <div v-for="cmd in commands" :key="cmd.action" class="item" @click="handleCommandClick(cmd.action)">
+        <span v-if="typeof cmd.icon === 'string'" class="icon text">{{ cmd.icon }}</span>
+        <component :is="cmd.icon" v-else-if="typeof cmd.icon === 'object'" class="icon" />
+        {{ cmd.label }}
+      </div>
+    </ContextMenuPlus>
+
+    <ContextMenuPlus v-if="showConversationMenu" @close="closeContextMenu" :anchor="`#dictate-${uniqueId}`" :position="menusPosition">
+      <div v-for="item in conversationMenu" :key="item.action" class="item" @click="handleConversationClick(item.action)">
+        {{ item.label }}
+      </div>
+    </ContextMenuPlus>
+
+    <PromptMenu
+      v-if="showPromptMenu"
+      :anchor="`#prompt-menu-${uniqueId}`"
+      :position="menusPosition"
+      :enable-tools="enableTools"
+      :enable-experts="enableExperts"
+      :enable-doc-repo="enableDocRepo"
+      :enable-instructions="enableInstructions"
+      :enable-attachments="enableAttachments"
+      :enable-deep-research="enableDeepResearch"
+      :tool-selection="chat.tools"
+      @close="closePromptMenu"
+      @expert-selected="handleExpertClick"
+      @manage-experts="handleManageExperts"
+      @doc-repo-selected="handlePromptMenuDocRepo"
+      @manage-doc-repo="handleManageDocRepo"
+      @instructions-selected="handlePromptMenuInstructions"
+      @select-all-tools="handleSelectAllTools"
+      @unselect-all-tools="handleUnselectAllTools"
+      @select-all-plugins="handleSelectAllPlugins"
+      @unselect-all-plugins="handleUnselectAllPlugins"
+      @all-plugins-toggle="handleAllPluginsToggle"
+      @plugin-toggle="handlePluginToggle"
+      @select-all-server-tools="handleSelectAllServerTools"
+      @unselect-all-server-tools="handleUnselectAllServerTools"
+      @all-server-tools-toggle="handleAllServerToolsToggle"
+      @server-tool-toggle="handleServerToolToggle"
+      @attach-requested="onAttach"
+      @deep-research-toggled="onDeepResearch"
+    />
+    
+    <EngineModelMenu
+      v-if="showModelMenu"
+      :anchor="`#model-menu-button-${uniqueId}`"
+      :position="menusPosition === 'above' ? 'above-right' : 'below-right'"
+      @close="closeModelMenu"
+      @empty="onNoEngineAvailable"
+      @model-selected="handleModelSelected"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 
-import { Expert, Command } from '../types/index'
-import { DocumentBase } from '../types/rag'
-import { StreamingChunk } from '../voice/stt'
-import { ref, computed, onMounted, onUnmounted, nextTick, watch, PropType } from 'vue'
-import { store } from '../services/store'
-import { expertI18n, commandI18n, t, i18nInstructions, getLlmLocale, setLlmLocale } from '../services/i18n'
-import { BIconBinoculars, BIconStars } from 'bootstrap-icons-vue'
-import LlmFactory, { ILlmManager } from '../llms/llm'
-import { mimeTypeToExtension, extensionToMimeType } from 'multi-llm-ts'
-import useAudioRecorder, { isAudioRecordingSupported } from '../composables/audio_recorder'
-import ContextMenu, { MenuPosition, type MenuAction } from './ContextMenu.vue'
-import useTipsManager from '../composables/tips_manager'
-import useTranscriber from '../composables/transcriber'
-import ImageUtils from '../composables/image_utils'
+import { ArrowUpIcon, BoxIcon, BrainIcon, ChevronDownIcon, CommandIcon, FeatherIcon, FolderIcon, HeartMinusIcon, HeartPlusIcon, LightbulbIcon, MicIcon, MoveLeftIcon, PlusIcon, TelescopeIcon, XIcon } from 'lucide-vue-next'
+import { extensionToMimeType, mimeTypeToExtension } from 'multi-llm-ts'
+import { computed, nextTick, onMounted, onUnmounted, PropType, ref, watch } from 'vue'
 import Waveform from '../components/Waveform.vue'
-import AttachmentView from './Attachment.vue'
-import Attachment from '../models/attachment'
+import useAudioRecorder from '../composables/audio_recorder'
 import Dialog from '../composables/dialog'
-import Message from '../models/message'
-import Loader from './Loader.vue'
+import useEventBus from '../composables/event_bus'
+import ImageUtils from '../composables/image_utils'
+import useTipsManager from '../composables/tips_manager'
+import * as ts from '../composables/tool_selection'
+import useTranscriber from '../composables/transcriber'
+import LlmFactory, { favoriteMockEngine, ILlmManager } from '../llms/llm'
+import Attachment from '../models/attachment'
 import Chat from '../models/chat'
+import Message from '../models/message'
+import { commandI18n, expertI18n, categoryI18n, getLlmLocale, i18nInstructions, setLlmLocale, t } from '../services/i18n'
+import { store } from '../services/store'
+import { Command, CustomInstruction, Expert, MessageExecutionType } from '../types/index'
+import { McpServerWithTools, McpToolUnique } from '../types/mcp'
+import { DocumentBase } from '../types/rag'
+import { isSTTReady, StreamingChunk } from '../voice/stt'
+import AttachmentView from './Attachment.vue'
+import ButtonIcon from './ButtonIcon.vue'
+import ContextMenuPlus, { MenuPosition } from './ContextMenuPlus.vue'
+import EngineModelMenu from './EngineModelMenu.vue'
+import Loader from './Loader.vue'
+import PromptFeature from './PromptFeature.vue'
+import PromptMenu from './PromptMenu.vue'
 
 export type SendPromptParams = {
   prompt: string,
@@ -95,7 +219,7 @@ export type SendPromptParams = {
   attachments?: Attachment[]
   docrepo?: string,
   expert?: Expert,
-  deepResearch?: boolean
+  execType?: MessageExecutionType
 }
 
 export type RunAgentParams = {
@@ -104,13 +228,12 @@ export type RunAgentParams = {
 
 export type HistoryProvider = (event: KeyboardEvent) => string[]
 
-import useEventBus from '../composables/event_bus'
 const { onEvent, emitEvent } = useEventBus()
 
 const props = defineProps({
   chat: {
     type: Object as PropType<Chat>,
-    required: true
+    required: false
   },
   conversationMode: {
     type: String,
@@ -157,6 +280,10 @@ const props = defineProps({
     type: Boolean,
     default: true
   },
+  enableTools: {
+    type: Boolean,
+    default: true
+  },
   enableDeepResearch: {
     type: Boolean,
     default: false
@@ -178,29 +305,29 @@ const tipsManager = useTipsManager(store)
 const llmManager: ILlmManager = LlmFactory.manager(store.config)
 let userStoppedDictation = false
 
+// Generate unique ID for this prompt instance to avoid conflicts when multiple prompts are in DOM
+const uniqueId = ref(crypto.randomUUID())
+
 const prompt = ref('')
-const instructions = ref<string>(undefined)
+const instructions = ref<CustomInstruction>(undefined)
 const expert = ref<Expert>(undefined)
 const command = ref<Command>(undefined)
 const attachments = ref<Attachment[]>([])
 const docrepo = ref<string>(undefined)
 const input = ref<HTMLTextAreaElement>(null)
 const docRepos = ref<DocumentBase[]>([])
-const showInstructions = ref(false)
-const showDocRepo = ref(false)
 const showExperts = ref(false)
-const showActiveExpert = ref(false)
 const showCommands = ref(false)
 const showConversationMenu = ref(false)
+const showPromptMenu = ref(false)
+const showModelMenu = ref(false)
 const deepResearchActive = ref(false)
-const hasDictation = ref(false)
 const dictating = ref(false)
 const processing = ref(false)
 const isDragOver = ref(false)
-const menuX = ref(0)
-const menuY = ref(0)
+const commandsAnchor = ref('.prompt .textarea-wrapper')
 
-const emit = defineEmits(['prompt', 'run-agent','stop'])
+const emit = defineEmits(['set-engine-model', 'tools-updated', 'prompt', 'run-agent','stop'])
 
 const engine = () => props.chat?.engine || llmManager.getChatEngineModel().engine
 const model = () => props.chat?.model || llmManager.getChatEngineModel().model
@@ -209,82 +336,72 @@ const backSpaceHitsToClearExpert = 1
 let backSpaceHitsWhenEmpty = 0
 let runCommandImmediate = false
 
+const hasDictation = computed(() => {
+  if (!props.enableDictation) return false
+  return isSTTReady(store.config)
+})
+
 const isProcessing = computed(() => {
   return processing.value || props.processing
 })
 
-const isPrompting = computed(() => {
-  return props.chat?.lastMessage()?.transient
-})
+type PromptingState = 'idle' | 'prompting' | 'canceling'
+const promptingState = ref<PromptingState>('idle')
 
-const docRepoActive = computed(() => {
-  return props.chat?.docrepo || docrepo.value
-})
-
-const instructionIds = [ 'standard', 'structured', 'playful', 'empathic', 'uplifting', 'reflective', 'visionary' ]
-
-const instructionsMenuItems = computed(() => {
-  return [
-    { label: t('prompt.instructions.title'), action: '', disabled: true },
-    { label: t('prompt.instructions.default'), action: 'null' },
-    ...instructionIds.map((id) => {
-      return { label: t(`settings.llm.instructions.${id}`), action: id }
-    }),
-    ...store.config.llm.customInstructions.map((custom) => {
-      return { label: custom.label, action: `custom:${custom.id}` }
-    })
-  ]
-})
-
-const chatInstructions = computed(() => {
-
-  // Check default instructions first
-  for (const id of instructionIds) {
-    if (props.chat.instructions === i18nInstructions(store.config, `instructions.chat.${id}`)) {
-      return { label: id, action: id }
-    }
+// Watch for changes in message transient state
+watch(() => props.chat?.lastMessage()?.transient, (isTransient) => {
+  if (isTransient && promptingState.value === 'idle') {
+    promptingState.value = 'prompting'
+  } else if (!isTransient && promptingState.value !== 'idle') {
+    promptingState.value = 'idle'
   }
-
-  // Check custom instructions
-  if (store.config.llm.customInstructions?.length > 0) {
-    for (const custom of store.config.llm.customInstructions) {
-      if (props.chat.instructions === custom.instructions) {
-        return { label: custom.label, action: `custom:${custom.id}` }
-      }
-    }
-  }
-
-  // default
-  return { label: '', action: 'null' }
-
-})
-
-const docReposMenuItems = computed(() => {
-  const menus: MenuAction[] = docRepos.value.map(d => {
-    return { label: d.name, action: d.uuid }
-  })
-  if (menus.length > 0 && docRepoActive.value) {
-    menus.push({ separator: true })
-  }
-  if (docRepoActive.value) {
-    menus.push({ label: 'Disconnect', action: 'disconnect' })
-  }
-  return menus
 })
 
 const expertsMenuItems = computed(() => {
-  return store.experts.filter((p: Expert) => p.state == 'enabled').map(p => {
-    return { label: p.name || expertI18n(p, 'name'), action: p.id, icon: BIconStars }
-  })
+  return store.experts
+    .filter((e) => e.state === 'enabled')
+    .map(e => ({
+      id: e.id,
+      name: e.name || expertI18n(e, 'name'),
+      categoryId: e.categoryId
+    }))
 })
 
-const activeExpertMenuItems = computed(() => {
-  return [
-    { label: expert.value.name || expertI18n(expert.value, 'name'), icon: BIconStars },
-    { label: expert.value.prompt || expertI18n(expert.value, 'prompt'), disabled: true, wrap: true },
-    { separator: true },
-    { label: t('prompt.experts.clear'), action: 'clear' },
-  ];
+const categoriesWithExperts = computed(() => {
+  // Get categories that have at least one enabled expert
+  const catIds = new Set<string>()
+  expertsMenuItems.value.forEach(exp => {
+    if (exp.categoryId) catIds.add(exp.categoryId)
+  })
+
+  // Get category objects and add labels
+  const categories = store.expertCategories
+    .filter(c => c.state === 'enabled' && catIds.has(c.id))
+    .map(c => ({
+      id: c.id,
+      icon: c.icon,
+      name: categoryI18n(c, 'name')
+    }))
+
+  // Sort alphabetically by name
+  return categories.sort((a, b) => a.name.localeCompare(b.name))
+})
+
+const expertsByCategory = computed(() => {
+  const grouped: Record<string, typeof expertsMenuItems.value> = {}
+
+  expertsMenuItems.value.forEach(exp => {
+    const catId = exp.categoryId || 'uncategorized'
+    if (!grouped[catId]) grouped[catId] = []
+    grouped[catId].push(exp)
+  })
+
+  // Keep experts in original order (from store.experts)
+  return grouped
+})
+
+const uncategorizedExperts = computed(() => {
+  return expertsMenuItems.value.filter(exp => !exp.categoryId)
 })
 
 const commands = computed(() => {
@@ -306,11 +423,29 @@ const conversationMenu = computed(() => {
   }
 })
 
+const modelName = computed(() => {
+  const model = llmManager.getChatModel(props.chat?.engine, props.chat?.model)
+  return model?.name || props.chat?.model || 'Select Model'
+})
+
+const isFavoriteModel = computed(() => llmManager.isFavoriteModel(props.chat?.engine, props.chat?.model))
+
+// Escape key to abort generation (document-level)
+const onEscapeKey = (event: KeyboardEvent) => {
+  if (event.key === 'Escape' && promptingState.value === 'prompting') {
+    onStopPrompting()
+    event.preventDefault()
+    event.stopPropagation()
+  }
+}
+
 onMounted(() => {
 
   // event
   onEvent('set-prompt', onSetPrompt)
   window.api.on('docrepo-modified', loadDocRepos)
+  document.addEventListener('keydown', onShortcutDown)
+  document.addEventListener('keydown', onEscapeKey)
   autoGrow(input.value)
 
   // other stuff
@@ -319,15 +454,73 @@ onMounted(() => {
 
   // reset doc repo and expert
   watch(() => props.chat || {}, () => {
-    docrepo.value = props.chat?.docrepo
-    instructions.value = props.chat?.instructions || null
+    docrepo.value = matchDocRepo(props.chat?.docrepo)
+    instructions.value = matchInstructions(props.chat?.instructions)
   }, { immediate: true })
 
 })
 
 onUnmounted(() => {
   window.api.off('docrepo-modified', loadDocRepos)
+  document.removeEventListener('keydown', onShortcutDown)
+  document.removeEventListener('keydown', onEscapeKey)
 })
+
+const onShortcutDown = (ev: KeyboardEvent) => {
+  const favorites = llmManager.getChatModels(favoriteMockEngine)
+  if (!favorites.length) return
+  if (!ev.altKey) return
+  let index = ev.keyCode - 49
+  if (index === -1) index = 9
+  if (index < 0 || index > favorites.length-1) return
+  llmManager.setChatModel(favoriteMockEngine, favorites[index].id)
+}
+
+const matchInstructions = (instructions?: string): CustomInstruction|null => {
+
+  // if no text
+  if (!instructions) {
+    return null
+  }
+
+  // First, check if it matches a custom instruction
+  const customInstructions = store.config.llm.customInstructions || []
+  for (const custom of customInstructions) {
+    if (custom.instructions === instructions) {
+      return {
+        id: custom.id,
+        label: custom.label,
+        instructions: custom.instructions
+      }
+    }
+  }
+
+  // Second, check if it matches a standard instruction
+  const instructionIds = ['standard', 'structured', 'playful', 'empathic', 'uplifting', 'reflective', 'visionary']
+  for (const instructionId of instructionIds) {
+    const standardInstructions = i18nInstructions(store.config, `instructions.chat.${instructionId}`)
+    if (standardInstructions === instructions) {
+      return {
+        id: instructionId,
+        label: t(`settings.llm.instructions.${instructionId}`) || instructionId,
+        instructions: instructions
+      }
+    }
+  }
+
+  // Default: return as custom instruction if no match found
+  return {
+    id: 'custom',
+    label: 'Custom',
+    instructions: instructions
+  }
+}
+
+const matchDocRepo = (docRepoId?: string): string | undefined => {
+  if (!docRepoId) return undefined
+  const exists = docRepos.value.some(repo => repo.uuid === docRepoId)
+  return exists ? docRepoId : undefined
+}
 
 const defaultPrompt = (conversationMode: string) => {
   if (conversationMode === 'auto') {
@@ -349,27 +542,17 @@ const setDeepResearch = (active: boolean) => {
 
 const initDictation = async () => {
 
-  // needed?
-  if (!props.enableDictation) {
-    return
-  }
-
-  // check
-  const supported = await isAudioRecordingSupported()
-  if (!supported) {
-    return
-  }
-
-  // this should be good enough
-  hasDictation.value = true
-
   // push-to-talk stuff
+
   const onKeyUpPTT = () => {
+    if (hasDictation.value === false) return
     //console.log('Stopping push-to-talk dictation')
     document.removeEventListener('keyup', onKeyUpPTT)
     stopDictation(false)
   }
+
   document.addEventListener('keydown', (event) => {
+    if (hasDictation.value === false) return
     if (props.conversationMode == 'ptt' && event.code === 'Space' && dictating.value === false) {
       //console.log('Starting push-to-talk dictation')
       document.addEventListener('keyup', onKeyUpPTT)
@@ -381,45 +564,10 @@ const initDictation = async () => {
 
 const loadDocRepos = () => {
   if (props.enableDocRepo) {
-    docRepos.value = window.api.docrepo.list()
+    docRepos.value = window.api.docrepo.list(store.config.workspaceId)
   }
 }
 
-const setInstructions = (action: string) => {
-  closeContextMenu()
-  if (action === 'null') {
-    instructions.value = null
-  } else if (action.startsWith('custom:')) {
-    // Handle custom instructions
-    const customId = action.replace('custom:', '')
-    const customInstruction = store.config.llm.customInstructions?.find(c => c.id === customId)
-    if (customInstruction) {
-      instructions.value = customInstruction.instructions
-    }
-  } else {
-    // Handle default instructions
-    // use chat llm locale if set
-    let llmLocale = null
-    const forceLocale = store.config.llm.forceLocale
-    if (props.chat?.locale) {
-      llmLocale = getLlmLocale()
-      setLlmLocale(props.chat.locale)
-      store.config.llm.forceLocale = true
-    }
-
-    // get the instructions
-    instructions.value = i18nInstructions(store.config, `instructions.chat.${action}`)
-
-    // restore
-    if (llmLocale) {
-      setLlmLocale(llmLocale)
-      store.config.llm.forceLocale = forceLocale
-    }
-  }
-  if (props.chat) {
-    props.chat.instructions = instructions.value
-  }
-}
 
 const onSetPrompt = (message: Message) => {
   prompt.value = message.content
@@ -439,6 +587,15 @@ const setExpert = (xpert: Expert) => {
   if (prompt.value == '@') {
     prompt.value = ''
   }
+  
+  // Switch engine and model if expert has them defined
+  if (xpert?.engine && xpert?.model && props.chat?.setEngineModel) {
+    props.chat.setEngineModel(xpert.engine, xpert.model)
+    if (props.chat.messages.length === 0) {
+      llmManager.setChatModel(xpert.engine, xpert.model)
+    }
+  }
+  
   nextTick(() => {
     input.value?.focus()
   })
@@ -453,25 +610,30 @@ const onSendPrompt = () => {
   prompt.value = defaultPrompt(props.conversationMode)
   nextTick(() => {
     autoGrow(input.value)
-    emit('prompt', {
-      instructions: instructions.value,
+    const sendPromptParams: SendPromptParams = {
+      instructions: instructions.value?.instructions,
       prompt: message,
       attachments: attachments.value,
       docrepo: docrepo.value,
       expert: expert.value,
-      deepResearch: deepResearchActive.value,
-    } as SendPromptParams)
+      execType: deepResearchActive.value ? 'deepresearch' : 'prompt',
+    }
+    emit('prompt', sendPromptParams)
     attachments.value = []
   })
 }
 
 const onStopPrompting = () => {
+  promptingState.value = 'canceling'
   emit('stop', null)
 }
 
-const onAttach = () => {
+const onAttach = async () => {
+
+  await closePromptMenu()
+  
   let files = window.api.file.pickFile({ multiselection: true, /*filters: [
-    { name: 'Images', extensions: ['jpg', 'png', 'gif'] }
+    { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif'] }
   ]*/ })
   if (Array.isArray(files)) {
     for (const filepath of files) {
@@ -487,6 +649,7 @@ const onAttach = () => {
     }
   }
 }
+
 
 const onPaste = (event: ClipboardEvent) => {
   for (let item of event.clipboardData.items) {
@@ -625,32 +788,13 @@ const onDrop = async (event: DragEvent) => {
   }
 }
 
-const onClickInstructions = () => {
-  const icon = document.querySelector('.prompt .instructions')
-  const rect = icon?.getBoundingClientRect()
-  menuX.value = rect?.left + (props.menusPosition === 'below' ? -10 : 0)
-  menuY.value = rect?.height + (props.menusPosition === 'below' ? rect?.y : 16 )  + 24
-  showInstructions.value = true
-}
 
 const openExperts = () => {
-  const icon = document.querySelector('.prompt .experts')
-  const rect = icon?.getBoundingClientRect()
-  menuX.value = rect?.left + (props.menusPosition === 'below' ? -10 : 0)
-  menuY.value = rect?.height + (props.menusPosition === 'below' ? rect?.y : 16 )  + 24
   showExperts.value = true
 }
 
 const onClickExperts = () => {
   openExperts()
-}
-
-const onClickActiveExpert = () => {
-  const icon = document.querySelector('.prompt .expert')
-  const rect = icon?.getBoundingClientRect()
-  menuX.value = rect?.left + (props.menusPosition === 'below' ? -10 : 0)
-  menuY.value = rect?.height + (props.menusPosition === 'below' ? rect?.y : 8 )  + 24
-  showActiveExpert.value = true
 }
 
 const onClickActiveCommand = () => {
@@ -710,7 +854,7 @@ const startDictation = async () => {
 
       },
       
-      onRecordingComplete: async (audioChunks: Blob[], noiseDetected: boolean) => {
+      onRecordingComplete: async (audioBlob: Blob, noiseDetected: boolean) => {
 
         try {
 
@@ -719,7 +863,7 @@ const startDictation = async () => {
           dictating.value = false
 
           // if streaming we are all done
-          if (audioChunks.length) {
+          if (audioBlob.size) {
 
             // update
             prompt.value = defaultPrompt(props.conversationMode)
@@ -731,7 +875,7 @@ const startDictation = async () => {
 
             // transcribe
             processing.value = true
-            const response = await transcriber.transcribe(audioChunks)
+            const response = await transcriber.transcribe(audioBlob)
             if (response) {
               prompt.value = response.text
             }
@@ -806,10 +950,6 @@ const startDictation = async () => {
 
 const onConversationMenu = () => {
   if (!props.enableConversations) return
-  const icon = document.querySelector('.prompt .dictate')
-  const rect = icon?.getBoundingClientRect()
-  menuX.value = rect?.left + (props.menusPosition === 'below' ? -10 : 0)
-  menuY.value = rect?.height + (props.menusPosition === 'below' ? rect.y : 8 )  + 24
   showConversationMenu.value = true
 }
 
@@ -832,64 +972,198 @@ const stopConversation = () => {
   emitEvent('conversation-mode', null)
 }
 
-const onDocRepo = async () => {
-
-  if (docRepos.value.length === 0) {
-    const result = await Dialog.show({
-      title: t('prompt.docRepos.none'),
-      showCancelButton: true,
-      confirmButtonText: t('common.create'),
-    })
-    if (result.isConfirmed) {
-      window.api.docrepo.open()
-    }
-    return
-  }
-  
-  showDocRepo.value = true
-  const icon = document.querySelector('.prompt .docrepo')
-  const rect = icon?.getBoundingClientRect()
-  menuX.value = rect?.left
-  menuY.value = rect?.height + 32
-}
-
-const handleDocRepoClick = (action: string) => {
-  closeContextMenu()
-  if (action === 'disconnect') {
-    if (props.chat) {
-      props.chat.docrepo = null
-    }
-    docrepo.value = null
-    window.api.docrepo.disconnect()
-  } else {
-    window.api.docrepo.connect(action)
-    if (props.chat) {
-      props.chat.docrepo = action
-    } else {
-      docrepo.value = action
-    }
-  }
-}
-
 const isContextMenuOpen = () => {
-  return showDocRepo.value || showExperts.value || showCommands.value || showActiveExpert.value || showConversationMenu.value
+  return showExperts.value || showCommands.value || showConversationMenu.value || showPromptMenu.value || showModelMenu.value
 }
 
 const closeContextMenu = () => {
-  showInstructions.value = false
-  showDocRepo.value = false
   showExperts.value = false
   showCommands.value = false
-  showActiveExpert.value = false
   showConversationMenu.value = false
+  showPromptMenu.value = false
+  showModelMenu.value = false
   nextTick(() => {
     input.value.focus()
   })
 }
 
+const onPromptMenu = () => {
+  closeContextMenu()
+  showPromptMenu.value = true
+}
+
+const onModelMenu = () => {
+  closeContextMenu()
+  showModelMenu.value = true
+}
+
+const closePromptMenu = async () => {
+  showPromptMenu.value = false
+  await nextTick()
+  input.value.focus()
+}
+
+const closeModelMenu = async () => {
+  showModelMenu.value = false
+  await nextTick()
+  input.value.focus()
+}
+
+const handlePromptMenuDocRepo = (docRepoUuid: string) => {
+  setDocRepo(docRepoUuid)
+  closePromptMenu()
+}
+
+const handleManageDocRepo = () => {
+  window.api.docrepo.open()
+  closePromptMenu()
+}
+
+const handleManageExperts = () => {
+  // window.api.docrepo.open()
+  closePromptMenu()
+}
+
+const handleModelSelected = (engine: string, model: string) => {
+  props.chat?.setEngineModel(engine, model)
+  emit('set-engine-model', engine, model)
+  closeModelMenu()
+}
+
+const onNoEngineAvailable = async () => {
+  console.warn('Prompt: No engines available, showing settings dialog')
+  closeModelMenu()
+  const rc = await Dialog.show({
+    title: t('prompt.noEngineAvailable.title'),
+    text: t('prompt.noEngineAvailable.text'),
+    showCancelButton: true,
+    confirmButtonText: t('common.yes'),
+    cancelButtonText: t('common.no'),
+  })
+  if (rc.isConfirmed) {
+    window.api.settings.open({ initialTab: 'models' })
+  }
+}
+
+const setDocRepo = (docRepoUuid: string | null) => {
+  if (docRepoUuid) {
+    window.api.docrepo.connect(docRepoUuid)
+    docrepo.value = docRepoUuid
+    if (props.chat) {
+      props.chat.docrepo = docRepoUuid
+    }
+  } else {
+    window.api.docrepo.disconnect()
+    docrepo.value = null
+    if (props.chat) {
+      props.chat.docrepo = null
+    }
+  }
+}
+
+const handlePromptMenuInstructions = (instructionId: string) => {
+
+  if (instructionId === 'null') {
+
+    instructions.value = null
+
+
+  } else if (instructionId.startsWith('custom:')) {
+
+    // Handle custom instructions
+    const customId = instructionId.replace('custom:', '')
+    const customInstruction = store.config.llm.customInstructions?.find(c => c.id === customId)
+    if (customInstruction) {
+      instructions.value = {
+        id: customInstruction.id,
+        label: customInstruction.label,
+        instructions: customInstruction.instructions
+      }
+    }
+  } else {
+
+    // Handle default instructions
+    // use chat llm locale if set
+    let llmLocale = null
+    const forceLocale = store.config.llm.forceLocale
+    if (props.chat?.locale) {
+      llmLocale = getLlmLocale()
+      setLlmLocale(props.chat.locale)
+      store.config.llm.forceLocale = true
+    }
+
+    // get the instructions
+    instructions.value = {
+      id: instructionId,
+      label: t(`settings.llm.instructions.${instructionId}`) || instructionId,
+      instructions: i18nInstructions(store.config, `instructions.chat.${instructionId}`)
+    }
+
+    // restore
+    if (llmLocale) {
+      setLlmLocale(llmLocale)
+      store.config.llm.forceLocale = forceLocale
+    }
+  }
+  if (props.chat) {
+    props.chat.instructions = instructions.value?.instructions
+  }
+  closePromptMenu()
+}
+
+const handleAllPluginsToggle = async () => {
+  props.chat.tools = await ts.handleAllPluginsToggle(props.chat.tools)
+  emit('tools-updated', props.chat.tools)
+}
+
+const handlePluginToggle = async (pluginName: string) => {
+  props.chat.tools = await ts.handlePluginToggle(props.chat.tools, pluginName)
+  emit('tools-updated', props.chat.tools)
+}
+
+const handleSelectAllTools = async (visibleIds?: string[] | null) => {
+  props.chat.tools = await ts.handleSelectAllTools(visibleIds)
+  emit('tools-updated', props.chat.tools)
+}
+
+const handleUnselectAllTools = async (visibleIds?: string[] | null) => {
+  props.chat.tools = await ts.handleUnselectAllTools(visibleIds)
+  emit('tools-updated', props.chat.tools)
+}
+
+const handleSelectAllPlugins = async (visibleIds?: string[] | null) => {
+  props.chat.tools = await ts.handleSelectAllPlugins(props.chat.tools, visibleIds)
+  emit('tools-updated', props.chat.tools)
+}
+
+const handleUnselectAllPlugins = async (visibleIds?: string[] | null) => {
+  props.chat.tools = await ts.handleUnselectAllPlugins(props.chat.tools, visibleIds)
+  emit('tools-updated', props.chat.tools)
+}
+
+const handleSelectAllServerTools = async (server: McpServerWithTools, visibleIds?: string[] | null) => {
+  props.chat.tools = await ts.handleSelectAllServerTools(props.chat.tools, server, visibleIds)
+  emit('tools-updated', props.chat.tools)
+}
+
+const handleUnselectAllServerTools = async (server: McpServerWithTools, visibleIds?: string[] | null) => {
+  props.chat.tools = await ts.handleUnselectAllServerTools(props.chat.tools, server, visibleIds)
+  emit('tools-updated', props.chat.tools)
+}
+
+const handleAllServerToolsToggle = async (server: McpServerWithTools) => {
+  props.chat.tools = await ts.handleAllServerToolsToggle(props.chat.tools, server)
+  emit('tools-updated', props.chat.tools)
+}
+
+const handleServerToolToggle = async (server: McpServerWithTools, tool: McpToolUnique) => {
+  props.chat.tools = await ts.handleServerToolToggle(props.chat.tools, server, tool)
+  emit('tools-updated', props.chat.tools)
+}
+
 const handleExpertClick = (action: string) => {
   closeContextMenu()
-  if (action === 'clear') {
+  if (action === 'clear' || action === 'none') {
     disableExpert()
     return
   } else if (action) {
@@ -905,13 +1179,10 @@ const disableCommand = () => {
   command.value = null
 }
 
-const onCommands = (immediate: boolean) => {
+const onCommands = () => {
+  commandsAnchor.value = `#commands-menu-${uniqueId.value}`
+  runCommandImmediate = true
   showCommands.value = true
-  runCommandImmediate = immediate
-  const textarea = document.querySelector('.prompt textarea')
-  const rect = textarea?.getBoundingClientRect()
-  menuX.value = rect?.right + (props.menusPosition === 'below' ? rect?.y - 150 : 0 ) - 250
-  menuY.value = rect?.height + (props.menusPosition === 'below' ? rect?.y + 24 : 0 ) + 32
 }
 
 const handleCommandClick = (action: string) => {
@@ -1013,7 +1284,9 @@ const onKeyDown = (event: KeyboardEvent) => {
     }
   } else if (event.key === '#') {
     if (props.enableCommands && prompt.value === '') {
-      onCommands(false)
+      commandsAnchor.value = '.prompt .textarea-wrapper'
+      runCommandImmediate = false
+      showCommands.value = true
       prompt.value = '#'
       event.preventDefault()
       return false
@@ -1031,15 +1304,6 @@ const onKeyDown = (event: KeyboardEvent) => {
   }
 }
 
-const onGlobalKeyDown = (event: KeyboardEvent) => {
-  const isCommand = !event.shiftKey && !event.altKey && (event.metaKey || event.ctrlKey)
-  if (event.key === 't' && isCommand) {
-    event.preventDefault()
-    event.stopPropagation()
-    onDictate()
-  }
-}
-
 const onKeyUp = (event: KeyboardEvent) => {
   nextTick(() => {
     autoGrow(event.target as HTMLElement)
@@ -1050,9 +1314,44 @@ const autoGrow = (element: HTMLElement) => {
   if (element) {
     // reset before calculating
     element.style.height = '0px'
-    element.style.height = Math.min(150, element.scrollHeight) + 'px'
+    element.style.height = Math.min(150, Math.max(24, element.scrollHeight + 4)) + 'px'
     emitEvent('prompt-resize', element.style.height)
   }
+}
+
+const addToFavorites = () => {
+  if (props.chat) {
+    llmManager.addFavoriteModel(props.chat.engine, props.chat.model)
+    tipsManager.showTip('favoriteModels')
+  }
+}
+
+const removeFavorite = () => {
+  if (props.chat) {
+    llmManager.removeFavoriteModel(props.chat.engine, props.chat.model)
+  }
+}
+
+const clearExpert = () => {
+  expert.value = null
+}
+
+const clearDocRepo = () => {
+  setDocRepo(null)
+}
+
+const clearInstructions = () => {
+  instructions.value = null
+}
+
+const clearDeepResearch = () => {
+  deepResearchActive.value = false
+}
+
+const getActiveDocRepoName = () => {
+  const activeUuid = docrepo.value || props.chat?.docrepo
+  const activeDoc = docRepos.value.find(doc => doc.uuid === activeUuid)
+  return activeDoc?.name || 'Knowledge Base'
 }
 
 defineExpose({
@@ -1092,12 +1391,12 @@ defineExpose({
 <style scoped>
 
 .prompt, .prompt * {
-  font-size: 12pt;
+  font-size: 16px;
 }
 
 .prompt {
   
-  padding: 8px 12px;
+  padding: 1rem;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -1112,14 +1411,16 @@ defineExpose({
   .icon {
     cursor: pointer;
     color: var(--prompt-icon-color);
-
     &.active {
-      fill: var(--highlight-color);
       color: var(--highlight-color);
     }
 
     &.dictate.active {
       color: red;
+    }
+
+    &.remove-favorite {
+      color: var(--color-error);
     }
 
   }
@@ -1201,17 +1502,15 @@ defineExpose({
       }
 
       .icon.left.command {
-        position: relative;
-        top: 2px;
         transform: scale(0.9);
       }
 
       .icon.left.loader-wrapper {
         position: relative;
-        top: -4px;
+        top: -8px;
         margin-left: 0;
         margin-right: -8px;
-        height: 24px;
+        height: 19px;
         display: flex;
         justify-content: center;
         gap: 8px;
@@ -1225,12 +1524,12 @@ defineExpose({
       }
 
       textarea {
+        padding: 0px;
         background-color: var(--prompt-input-bg-color);
         color: var(--prompt-input-text-color);
         border: none;
         resize: none;
         box-sizing: border-box;
-        border-radius: 16px;
         overflow-x: hidden;
         overflow-y: auto;
         width: 100%;
@@ -1260,14 +1559,81 @@ defineExpose({
 
   .actions {
     display: flex;
-    gap: 0.25rem;
+    gap: 0.5rem;
+    align-items: center;
     margin-top: 0.25rem;
-    margin-left: 0.25rem;
 
     &:not(:has(*)) {
       display: none;
     }
-    
+
+    .prompt-menu {
+      position: relative;
+      left: -4px;
+      .icon {
+        transform: scale(1.2);
+      }
+    }
+
+    .model-menu-button {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      cursor: pointer;
+      gap: 0.25rem;
+
+      .model-name {
+        font-size: 13px;
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--prompt-icon-color);
+      }
+
+      svg {
+        color: var(--prompt-icon-color);
+        width: var(--icon-md);
+        height: var(--icon-md);
+      }
+
+      .icon.caret {
+        width: 0.5rem;
+        height: 0.75rem;
+      }
+        
+    }
+
+    .send-stop {
+      
+      width: 2rem;
+      height: 2rem;
+      border-radius: 0.375rem;
+      background-color: var(--prompt-icon-color);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      svg {
+        width: var(--icon-md);
+        height: var(--icon-md);
+        color: var(--color-surface);
+      }
+
+      &:has(.disabled) {
+        background-color: var(--color-surface-high);
+      }
+
+      &:has(.canceling) {
+        opacity: 0.6;
+        cursor: not-allowed;
+        svg {
+          animation: pulse 1.5s ease-in-out infinite;
+        }
+      }
+
+    }
+
     .icon {
       width: 1rem;
       height: 1rem;
@@ -1303,6 +1669,15 @@ defineExpose({
 
   }
 
+}
+
+@keyframes pulse {
+  0%, 100% {
+    scale: 1.05;
+  }
+  50% {
+    scale: 0.75;
+  }
 }
 
 .windows .input, .windows .input .textarea-wrapper textarea {

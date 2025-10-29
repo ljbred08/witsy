@@ -20,12 +20,6 @@ export default class Commander {
 
   static initCommand = async (app: App, timeout?: number): Promise<void> => {
 
-    // not available in mas
-    if (process.mas) {
-      window.showMasLimitsDialog()
-      return
-    }
-
     // start time
     const startTime = Date.now();
 
@@ -40,7 +34,7 @@ export default class Commander {
     if (text == null) {
       try {
         new Notification({
-          title: 'Witsy',
+          title: t('common.appName'),
           body: t('automation.grabError')
         }).show()
       } catch (error) {
@@ -53,7 +47,7 @@ export default class Commander {
     if (text.trim() === '') {
       try {
         new Notification({
-          title: 'Witsy',
+          title: t('common.appName'),
           body: t('automation.commander.emptyText')
         }).show()
         console.log('No text selected');

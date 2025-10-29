@@ -3,6 +3,8 @@
 export const APP = {
   GET_APP_PATH: 'get-app-path',
   GET_ASSET_PATH: 'get-asset-path',
+  GET_VERSION: 'get-version',
+  GET_HTTP_PORT: 'app-get-http-port',
   SET_APPEARANCE_THEME: 'set-appearance-theme',
   SHOW_ABOUT: 'show-about',
   // SHOW_DIALOG: 'show-dialog',
@@ -16,6 +18,9 @@ export const MAIN_WINDOW = {
   UPDATE_MODE: 'main-window-update-mode',
   SET_CONTEXT_MENU_CONTEXT: 'main-window-set-menu-context',
   CLOSE: 'main-window-close',
+  HIDE_WINDOW_BUTTONS: 'main-window-hide-buttons',
+  SHOW_WINDOW_BUTTONS: 'main-window-show-buttons',
+  MOVE_WINDOW: 'main-window-move',
 } as const;
 
 export const DEBUG = {
@@ -81,6 +86,8 @@ export const COMMANDS = {
 export const EXPERTS = {
   LOAD: 'experts-load',
   SAVE: 'experts-save',
+  LOAD_CATEGORIES: 'experts-load-categories',
+  SAVE_CATEGORIES: 'experts-save-categories',
   EXPORT: 'experts-export',
   IMPORT: 'experts-import',
 } as const;
@@ -95,6 +102,8 @@ export const AGENTS = {
   SAVE_RUN: 'agents-save-run',
   DELETE_RUN: 'agents-delete-run',
   DELETE_RUNS: 'agents-delete-runs',
+  GENERATE_WEBHOOK_TOKEN: 'agents-generate-webhook-token',
+  GET_API_BASE_PATH: 'agents-get-api-base-path',
 } as const;
 
 export const DOCREPO = {
@@ -103,13 +112,14 @@ export const DOCREPO = {
   CONNECT: 'docrepo-connect',
   DISCONNECT: 'docrepo-disconnect',
   CREATE: 'docrepo-create',
-  RENAME: 'docrepo-rename',
+  UPDATE: 'docrepo-update',
   DELETE: 'docrepo-delete',
   ADD_DOCUMENT: 'docrepo-add-document',
   REMOVE_DOCUMENT: 'docrepo-remove-document',
   QUERY: 'docrepo-query',
   IS_EMBEDDING_AVAILABLE: 'docrepo-is-embedding-available',
-  GET_CURRENT_QUEUE_ITEM: 'docrepo-get-current-queue-item'
+  GET_CURRENT_QUEUE_ITEM: 'docrepo-get-current-queue-item',
+  IS_SOURCE_SUPPORTED: 'docrepo-is-source-supported'
 } as const;
 
 export const AUTOMATION = {
@@ -160,6 +170,10 @@ export const MARKDOWN = {
 
 export const INTERPRETER = {
   PYTHON_RUN: 'code-python-run',
+  PYODIDE_RUN: 'code-pyodide-run',
+  PYODIDE_DOWNLOAD: 'code-pyodide-download',
+  PYODIDE_IS_CACHED: 'code-pyodide-is-cached',
+  PYODIDE_CLEAR_CACHE: 'code-pyodide-clear-cache',
 } as const;
 
 export const MCP = {
@@ -170,15 +184,27 @@ export const MCP = {
   GET_INSTALL_COMMAND: 'mcp-get-install-command',
   INSTALL_SERVER: 'mcp-install-server',
   RELOAD: 'mcp-reload',
+  RESTART_SERVER: 'mcp-restart-server',
   GET_STATUS: 'mcp-get-status',
+  GET_ALL_SERVERS_WITH_TOOLS: 'mcp-get-all-servers-with-tools',
   GET_SERVER_TOOLS: 'mcp-get-server-tools',
-  GET_TOOLS: 'mcp-get-tools',
+  GET_LLM_TOOLS: 'mcp-get-tools',
   CALL_TOOL: 'mcp-call-tool',
+  CANCEL_TOOL: 'mcp-cancel-tool',
   ORIGINAL_TOOL_NAME: 'mcp-original-tool-name',
+  DETECT_OAUTH: 'mcp-detect-oauth',
+  START_OAUTH_FLOW: 'mcp-start-oauth-flow',
+  COMPLETE_OAUTH_FLOW: 'mcp-complete-oauth-flow',
 } as const;
 
 export const SCRATCHPAD = {
   OPEN: 'scratchpad-open',
+  LIST: 'scratchpad-list',
+  LOAD: 'scratchpad-load',
+  SAVE: 'scratchpad-save',
+  RENAME: 'scratchpad-rename',
+  DELETE: 'scratchpad-delete',
+  IMPORT: 'scratchpad-import',
 } as const;
 
 export const COMPUTER = {
@@ -204,6 +230,8 @@ export const MEMORY = {
 
 export const SEARCH = {
   QUERY: 'search-query',
+  TEST: 'search-test',
+  CANCEL: 'search-cancel',
 } as const;
 
 export const STUDIO = {
@@ -237,4 +265,15 @@ export const OLLAMA = {
 
 export const GOOGLE = {
   DOWNLOAD_MEDIA: 'google-download-media',
+} as const;
+
+export const WORKSPACE = {
+  LIST: 'workspace-list',
+  LOAD: 'workspace-load',
+  SAVE: 'workspace-save',
+  DELETE: 'workspace-delete',
+} as const;
+
+export const CLI = {
+  INSTALL: 'cli-install',
 } as const;

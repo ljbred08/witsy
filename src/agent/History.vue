@@ -9,11 +9,11 @@
         <option value="all">{{ t('agent.view.filter.all') }}</option>
         <option value="exclude">{{ t('agent.view.filter.exclude_workflow') }}</option>
       </select>
-      <BIconCalendarX 
-        class="icon clear" 
-        v-tooltip="{ text: t('agent.help.clearHistory'), position: 'bottom-left' }" 
-        @click="$emit('clear')" 
-      />
+      <ButtonIcon 
+        class="clear"
+        v-tooltip="{ text: t('agent.help.clearHistory'), position: 'bottom-left' }"
+        @click="$emit('clear')"
+      ><CalendarXIcon /></ButtonIcon>
     </div>
 
     <div class="panel-body">
@@ -38,7 +38,7 @@
               <td class="date">{{ timeAgo.format(new Date(run.createdAt)) }}</td>
               <td class="trigger">{{ t(`agent.trigger.${run.trigger}`) }}</td>
               <td class="status">{{ t(`agent.status.${run.status}`) }}</td>
-              <td class="view"><BIconSearch /> </td>
+              <td class="view"><EyeIcon /> </td>
             </tr>
           </tbody>
         </table>
@@ -52,10 +52,12 @@
 
 <script setup lang="ts">
 
-import { Agent, AgentRun } from '../types/index';
-import { PropType, computed } from 'vue'
-import { t } from '../services/i18n'
-import { useTimeAgo } from '../composables/ago'
+import { CalendarXIcon, EyeIcon } from 'lucide-vue-next';
+import { PropType, computed } from 'vue';
+import ButtonIcon from '../components/ButtonIcon.vue';
+import { useTimeAgo } from '../composables/ago';
+import { t } from '../services/i18n';
+import { Agent, AgentRun } from '../types/agents';
 
 const timeAgo = useTimeAgo()
 
@@ -117,7 +119,7 @@ const showContextMenu = (event: MouseEvent, run: AgentRun) => {
 .empty {
   padding: 3rem;
   text-align: center;
-  font-size: 18pt;
+  font-size: 24px;
   color: var(--faded-text-color);
   font-family: var(--font-family-serif);
 }

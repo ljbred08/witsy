@@ -3,7 +3,9 @@
     <div class="sp-sidebar">
       <header>
         <div class="title">{{ t('designStudio.title') }}</div>
-        <BIconArrowCounterclockwise class="icon reset" @click="onReset" v-if="currentMedia" />
+        <ButtonIcon class="reset" @click="onReset" v-if="currentMedia">
+          <ListRestartIcon  />
+        </ButtonIcon>
       </header>
       <main>
         <div class="header">
@@ -12,7 +14,7 @@
             <button :class="{active: mode === 'history'}" @click="mode = 'history'">{{ t('designStudio.history.title') }}</button>
           </div>
         </div>
-        <Settings :class="{ hidden: mode !== 'create' }" ref="settings" :current-media="currentMedia" :is-generating="isGenerating" @upload="onUpload" @generate="onMediaGenerationRequest" />
+        <Settings :class="{ hidden: mode !== 'create' }" ref="settings" :current-media="currentMedia" :is-generating="isGenerating" @upload="onUpload" @draw="onDraw" @generate="onMediaGenerationRequest" />
         <History :class="{ hidden: mode !== 'history' }" :history="history" :selected-messages="selection" @select-message="selectMessage" @context-menu="showContextMenu" />
       </main>
     </div>
@@ -25,32 +27,47 @@
     <div v-if="isDragOver" class="drop-wrapper">
       <div class="drop-overlay"></div>  
       <div class="drop-indicator">
-        <BIconImageFill />
+        <ImagePlusIcon />
         {{ t('designStudio.dropzone') }}
       </div>
     </div>
   </div>
-  <ContextMenu v-if="showMenu" @close="closeContextMenu" :actions="contextMenuActions()" @action-clicked="handleActionClick" :x="menuX" :y="menuY" />
+  <ContextMenuPlus v-if="showMenu" @close="closeContextMenu" :mouseX="menuX" :mouseY="menuY">
+    <div v-if="selection.length == 1" class="item" @click="handleActionClick('load')">
+      {{ t('designStudio.loadMediaSettings') }}
+    </div>
+    <div v-if="selection.length == 1" class="item" @click="handleActionClick('rename')">
+      {{ t('common.rename') }}
+    </div>
+    <div class="item" @click="handleActionClick('delete')">
+      {{ t('common.delete') }}
+    </div>
+  </ContextMenuPlus>
+  <DrawingCanvas v-if="showDrawingCanvas" :backgroundImage="currentMediaUrl" @close="onDrawingClose" @save="onDrawingSave" />
 </template>
 
 <script setup lang="ts">
-import { FileContents } from '../types/file'
-import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
-import { t } from '../services/i18n'
-import { store, kMediaChatId, kReferenceParamValue } from '../services/store'
-import { saveFileContents } from '../services/download'
+import { ImagePlusIcon, ListRestartIcon } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import ButtonIcon from '../components/ButtonIcon.vue'
+import ContextMenuPlus from '../components/ContextMenuPlus.vue'
+import DrawingCanvas from '../components/DrawingCanvas.vue'
 import Dialog from '../composables/dialog'
-import ContextMenu from '../components/ContextMenu.vue'
-import Settings from '../studio/Settings.vue'
-import History from '../studio/History.vue'
-import Preview from '../studio/Preview.vue'
-import ImageCreator from '../services/image'
-import VideoCreator from '../services/video'
-import Message from '../models/message'
+import useEventBus from '../composables/event_bus'
 import Attachment from '../models/attachment'
 import Chat from '../models/chat'
+import Message from '../models/message'
+import { saveFileContents } from '../services/download'
+import { t } from '../services/i18n'
+import ImageCreator from '../services/image'
+import { kMediaChatId, kReferenceParamValue, store } from '../services/store'
+import VideoCreator from '../services/video'
+import History from '../studio/History.vue'
+import Preview from '../studio/Preview.vue'
+import Settings from '../studio/Settings.vue'
+import { FileContents } from '../types/file'
+import { anyDict } from '../types/index'
 
-import useEventBus from '../composables/event_bus'
 const { emitEvent } = useEventBus()
 
 defineProps({
@@ -70,19 +87,22 @@ const menuX = ref(0)
 const menuY = ref(0)
 const targetRow = ref<Message|null>(null)
 const isDragOver = ref(false)
+const showDrawingCanvas = ref(false)
 
-const contextMenuActions = () => {
-  return [
-    ...selection.value.length == 1 ? [
-      { label: t('designStudio.loadMediaSettings'), action: 'load' },
-      { label: t('common.rename'), action: 'rename' },
-    ] : [],
-    { label: t('common.delete'), action: 'delete' },
-  ]
-}
-
-const currentMedia = computed(() => {
+const currentMedia = computed((): Message => {
   return selection.value.length === 1 ? selection.value[0] : null
+})
+
+const currentMediaUrl = computed((): string | null => {
+  if (currentMedia.value && 
+      currentMedia.value.attachments && 
+      currentMedia.value.attachments.length > 0) {
+    const attachment = currentMedia.value.attachments[0]
+    if (attachment && attachment.isImage() && attachment.url) {
+      return attachment.url
+    }
+  }
+  return null
 })
 
 const history = computed(() => {
@@ -90,7 +110,28 @@ const history = computed(() => {
 })
 
 onMounted(() => {
+  
   // we need the media chat
+  initializeChat()
+  store.addListener('workspaceSwitched', initializeChat)
+
+  // events
+  window.api.on('delete-media', onDeleteMedia)
+  window.api.on('select-all-media', onSelectAll)
+  document.addEventListener('keydown', onKeyDown)
+  document.addEventListener('paste', onPaste)
+
+})
+
+onUnmounted(() => {
+  store.removeListener('workspaceSwitched', initializeChat)
+  document.removeEventListener('keydown', onKeyDown)
+  document.removeEventListener('paste', onPaste)
+  window.api.off('delete-media', onDeleteMedia)
+  window.api.off('select-all-media', onSelectAll)
+})
+
+const initializeChat = () => {
   chat.value = store.history.chats.find(chat => chat.uuid === kMediaChatId)
   if (!chat.value) {
     chat.value = Chat.fromJson({
@@ -102,21 +143,7 @@ onMounted(() => {
     chat.value.addMessage(new Message('system', 'Dummy chat to save created media'))
     store.history.chats.push(chat.value)
   }
-
-  // events
-  window.api.on('delete-media', onDeleteMedia)
-  window.api.on('select-all-media', onSelectAll)
-  document.addEventListener('keydown', onKeyDown)
-  document.addEventListener('paste', onPaste)
-
-})
-
-onUnmounted(() => {
-  document.removeEventListener('keydown', onKeyDown)
-  document.removeEventListener('paste', onPaste)
-  window.api.off('delete-media', onDeleteMedia)
-  window.api.off('select-all-media', onSelectAll)
-})
+}
 
 const isSelected = (msg: Message) => {
   return selection.value.some(m => m.uuid === msg.uuid)
@@ -136,6 +163,7 @@ const onDeleteMedia = () => {
 }
 
 const onReset = () => {
+  settings.value.reset()
   selection.value = []
   clearStacks()
   mode.value = 'create'
@@ -174,7 +202,7 @@ const closeContextMenu = () => {
 }
 
 const handleActionClick = async (action: string) => {
-  
+
   // close
   closeContextMenu()
 
@@ -352,6 +380,7 @@ const updateMessage = (msg: Message) => {
         filename: a.url.split(/[\\/]/).pop(),
         directory: 'userData',
         subdir: 'images',
+        workspace: store.config.workspaceId,
         prompt: false
       }
     })
@@ -373,13 +402,58 @@ const processUpload = (fileName: string, mimeType: string, fileUrl: string) => {
 
 const onUpload = () => {
   let file = window.api.file.pickFile({ filters: [
-    { name: 'Images', extensions: ['jpg', 'png', 'gif'] }
+    { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif'] }
   ] })
   if (file) {
     const fileContents = file as FileContents
     const fileUrl = saveFileContents(fileContents.url.split('.').pop(), fileContents.contents)
     const fileName = fileContents.url.split(/[\\/]/).pop()
     processUpload(fileName, fileContents.mimeType, fileUrl)
+  }
+}
+
+const onDraw = () => {
+  showDrawingCanvas.value = true
+}
+
+const onDrawingClose = () => {
+  showDrawingCanvas.value = false
+}
+
+const onDrawingSave = (drawing: { url: string, mimeType: string, filename: string }) => {
+  showDrawingCanvas.value = false
+  
+  // Check if there's already a current message selected
+  if (currentMedia.value) {
+    // Add current state to undo stack before replacing
+    undoStack.value.push(backupCurrentMessage())
+    redoStack.value = []
+    
+    // Update the existing message with the new drawing
+    const message = currentMedia.value
+    
+    // Delete the old attachment file
+    if (message.attachments.length > 0) {
+      window.api.file.delete(message.attachments[0].url)
+      message.attachments = []
+    }
+    
+    // Update message content and attachments
+    message.content = message.content.length ? `${message.content} / ${t('drawingCanvas.draw')}` : t('drawingCanvas.draw')
+    message.createdAt = Date.now()
+    message.engine = 'drawing'
+    message.model = drawing.filename
+    message.attach(new Attachment('', drawing.mimeType, drawing.url))
+    
+    // Move message to end of chat
+    chat.value.messages = chat.value.messages.filter((m) => m.uuid !== message.uuid)
+    chat.value.messages.push(message)
+    
+    // Save history
+    store.saveHistory()
+  } else {
+    // No current message, create a new one
+    processUpload(drawing.filename, drawing.mimeType, drawing.url)
   }
 }
 
@@ -503,7 +577,15 @@ const processImageFile = async (file: File) => {
   }
 }
 
-const onMediaGenerationRequest = async (data: any) => {
+const onMediaGenerationRequest = async (data: {
+  mediaType: 'image' | 'video'
+  action: 'edit' | 'transform'
+  engine: string,
+  model: string,
+  prompt: string,
+  attachments: Attachment[],
+  params: anyDict
+}) => {
 
   // check
   const message: Message|null = selection.value.length == 0 ? null : selection.value[0]
@@ -512,7 +594,7 @@ const onMediaGenerationRequest = async (data: any) => {
   const currentUrl = message?.attachments[0]?.url
   const isEditing = data.action === 'edit' && !!currentUrl
   const isTransforming = data.action === 'transform' && !!currentUrl
-  let attachReference = isEditing || isTransforming
+  let attachReference = isEditing || isTransforming || data.attachments.length > 0
 
   // make a copy as we are going to change that
   const params = JSON.parse(JSON.stringify(data.params))
@@ -595,7 +677,13 @@ const onMediaGenerationRequest = async (data: any) => {
     const media = await creator.execute(data.engine, data.model, {
       prompt: data.prompt,
       ...params
-    }, attachReference ? window.api.file.read(currentUrl) : undefined)
+    }, attachReference ? [
+      ...(currentUrl ? [window.api.file.read(currentUrl)] : []),
+      ...(data.attachments.length ? data.attachments.map(a => ({
+        mimeType: a.mimeType,
+        contents: a.content
+      })) : [])
+    ] : undefined)
 
     // check
     if (!media?.url) {
@@ -701,7 +789,7 @@ const onFullScreen = (url: string) => {
   
   .sp-sidebar {
   
-    flex: 0 0 var(--create-panel-width);
+    flex: 0 0 var(--large-panel-width);
 
     header {
 
@@ -714,8 +802,6 @@ const onFullScreen = (url: string) => {
 
     main {
       flex: 1;
-      padding-top: 1rem;
-      border-right: 1px solid var(--sidebar-border-color);
     }
 
     main .header {
@@ -723,6 +809,21 @@ const onFullScreen = (url: string) => {
       display: flex;
       justify-content: center;
       align-items: center;
+
+      .button-group {
+        width: 100%;
+        align-self: center;
+        display: flex;
+        justify-content: space-between;
+
+
+        button {
+          flex: 1;
+          padding: 0.5rem 1rem;
+        }
+
+      }
+
     }
 
     main .hidden {
@@ -764,13 +865,13 @@ const onFullScreen = (url: string) => {
   gap: 2rem;
   text-align: center;
   font-size: 1.5rem;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   line-height: 150%;
 
   svg {
     width: 4rem;
     height: 4rem;
-    fill: var(--highlight-color);
+    color: var(--highlight-color);
     border-radius: 0.5rem;
     transform: scaleX(1.1) rotate(5deg);
   }

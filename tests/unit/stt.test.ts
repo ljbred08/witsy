@@ -12,6 +12,7 @@ import STTNvidia from '../../src/voice/stt-nvidia'
 import STTOpenAI from '../../src/voice/stt-openai'
 import STTSpeechmatics from '../../src/voice/stt-speechmatics'
 import STTWhisper from '../../src/voice/stt-whisper'
+import STTSoniox from '../../src/voice/stt-soniox'
 import { fal } from '@fal-ai/client'
 import { Configuration } from '../../src/types/config'
 
@@ -100,6 +101,46 @@ global.fetch = vi.fn(async (url: string | Request, init?: any) => {
     }
   }
 
+  // Soniox file upload
+  if (url.includes('api.soniox.com/v1/files') && init?.method === 'POST') {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'mock-soniox-file-id' }),
+      text: async () => ''
+    }
+  }
+
+  // Soniox transcription creation  
+  if (url.includes('api.soniox.com/v1/transcriptions') && init?.method === 'POST') {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ transcription_id: 'mock-soniox-transcription-id' }),
+      text: async () => ''
+    }
+  }
+
+  // Soniox status check
+  if (url.includes('api.soniox.com/v1/transcriptions/mock-soniox-transcription-id') && !url.includes('transcript')) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'completed' }),
+      text: async () => ''
+    }
+  }
+
+  // Soniox transcript retrieval
+  if (url.includes('api.soniox.com/v1/transcriptions/mock-soniox-transcription-id/transcript')) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ text: 'transcribed' }),
+      text: async () => ''
+    }
+  }
+
   // Default fallback for unmatched requests
   return {
     ok: false,
@@ -162,11 +203,13 @@ vi.mock('@huggingface/inference', async () => {
 
 vi.mock('webm-to-wav-converter', async () => {
   return {
-    getWaveBlob: async (blob) => {
-      return new Blob([blob], { type: 'audio/wav' })
-    }
+    getWaveBlob: vi.fn(async () => {
+      // Mock conversion - return a WAV blob
+      return new Blob(['mock wav data'], { type: 'audio/wav' })
+    })
   }
 })
+
 
 beforeAll(() => {
   window.AudioContext = vi.fn()
@@ -185,6 +228,7 @@ beforeEach(() => {
 test('Requires download', () => {
   expect(requiresDownload('openai')).toBe(false)
   expect(requiresDownload('groq')).toBe(false)
+  expect(requiresDownload('soniox')).toBe(false)
   expect(requiresDownload('whisper')).toBe(true)
 })
 
@@ -363,7 +407,93 @@ test('Instantiates Custom OpenAI', async () => {
   await expect(engine.transcribe(new Blob())).resolves.toStrictEqual({ text: 'transcribed' })
 })
 
+test('Instantiates Soniox', async () => {
+  store.config.stt.engine = 'soniox'
+  store.config.engines.soniox = {
+    apiKey: 'test-soniox-key',
+    models: { chat: [] },
+    model: { chat: '' }
+  }
+  
+  const engine = getSTTEngine(store.config)
+  expect(engine).toBeDefined()
+  expect(engine).toBeInstanceOf(STTSoniox)
+  expect(engine).toHaveProperty('transcribe')
+  expect(engine).toHaveProperty('transcribeFile')
+  expect(engine.isReady()).toBe(true)
+  expect(engine.requiresDownload()).toBe(false)
+  expect(engine.isStreamingModel('realtime-transcription')).toBe(true)
+  expect(engine.requiresPcm16bits('realtime-transcription')).toBe(true)
+  await engine.initialize(initCallback)
+  expect(initCallback).toHaveBeenLastCalledWith({ task: 'soniox', status: 'ready', model: expect.any(String) })
+})
+
 test('Throws error on unknown engine', async () => {
   store.config.stt.engine = 'unknown'
   expect(() => getSTTEngine(store.config)).toThrowError('Unknown STT engine unknown')
+})
+
+test('Mistral STT converts WebM to WAV for transcription', async () => {
+  const { getWaveBlob } = await import('webm-to-wav-converter')
+  
+  store.config.stt.engine = 'mistralai'
+  store.config.stt.model = 'voxtral-mini-latest-transcribe'
+  store.config.engines.mistralai = {
+    apiKey: 'dummy-mistral-key',
+    models: { chat: [] },
+    model: { chat: '' }
+  }
+  
+  const engine = getSTTEngine(store.config)
+  await engine.initialize(initCallback)
+  
+  // Test with WebM blob
+  const webmBlob = new Blob(['mock webm data'], { type: 'audio/webm;codecs=opus' })
+  await expect(engine.transcribe(webmBlob)).resolves.toStrictEqual({ text: 'mock-transcription' })
+  
+  // Verify WAV conversion was called
+  expect(getWaveBlob).toHaveBeenCalledWith(webmBlob, false)
+})
+
+test('Mistral STT handles WAV conversion failure gracefully', async () => {
+  const { getWaveBlob } = await import('webm-to-wav-converter')
+  // Mock conversion to fail
+  ;(getWaveBlob as any).mockRejectedValueOnce(new Error('Conversion failed'))
+  
+  store.config.stt.engine = 'mistralai'
+  store.config.stt.model = 'voxtral-mini-latest-transcribe'
+  store.config.engines.mistralai = {
+    apiKey: 'dummy-mistral-key',
+    models: { chat: [] },
+    model: { chat: '' }
+  }
+  
+  const engine = getSTTEngine(store.config)
+  await engine.initialize(initCallback)
+  
+  // Should fallback to original file when conversion fails
+  const webmBlob = new Blob(['mock webm data'], { type: 'audio/webm' })
+  await expect(engine.transcribe(webmBlob)).resolves.toStrictEqual({ text: 'mock-transcription' })
+})
+
+test('Mistral STT handles MIME type conversion for WebM files', async () => {
+  store.config.stt.engine = 'mistralai'
+  store.config.stt.model = 'voxtral-mini-latest'
+  store.config.engines.mistralai = {
+    apiKey: 'dummy-mistral-key',
+    models: { chat: [] },
+    model: { chat: '' }
+  }
+  
+  const engine = getSTTEngine(store.config)
+  await engine.initialize(initCallback)
+  
+  // For completion API path, we need to mock the file's arrayBuffer method
+  const mockFile = {
+    type: 'audio/webm;codecs=opus',
+    arrayBuffer: async () => new ArrayBuffer(0),
+    name: 'audio.webm'
+  } as File
+  
+  await expect(engine.transcribe(mockFile)).resolves.toStrictEqual({ text: 'mock-completion' })
 })
